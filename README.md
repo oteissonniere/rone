@@ -125,8 +125,9 @@ live endpoint):
   state per line, from `--file` or stdin); `--json` emits an array of
   `{"input", "answers"}` objects for scripts.
 - **Profiles**: a config file (`rone.toml`) defines named server/model
-  profiles (`base_url`, `model`, `min_confidence`); pick one with `--profile`
-  or set a `default_profile`. Command-line flags override the profile.
+  profiles (`base_url`, `model`, `min_confidence`, `api_key`, `timeout`);
+  pick one with `--profile` or set a `default_profile`. Command-line flags
+  override the profile.
 - **MCP server mode**: `rone mcp` serves the presets as MCP tools over stdio
   (`list_presets`, `ask`, `batch`), so AI agents can call them.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
@@ -177,8 +178,8 @@ cat tickets.txt | rone batch --preset triage --json
 ### Configuration file
 
 Rone reads an optional TOML config file to define named **profiles** — a
-`base_url`, a `model` and an optional `min_confidence` bundled together. The
-first existing file in this order is used:
+`base_url`, a `model`, and optional `min_confidence`, `api_key` and
+`timeout` bundled together. The first existing file in this order is used:
 
 1. `--config <path>` (explicit)
 2. `$RONE_CONFIG`
@@ -200,6 +201,10 @@ min_confidence = 0.8
 [profiles.production]
 base_url = "https://api.example.com/v1"
 model = "laya-2"
+# Bearer token; "env:VAR" reads it from the environment
+api_key = "env:RONE_API_KEY"
+# request timeout in seconds
+timeout = 30
 ```
 
 Pick a profile with `--profile`; without it, `default_profile` is used (and
@@ -216,6 +221,11 @@ rone ask --preset triage --profile local --model laya-2 --text "..."
 # point at a specific config file
 rone ask --preset triage --config ./ci.rone.toml --profile production --text "..."
 ```
+
+`api_key` accepts a literal token or an `env:VAR` reference, resolved from
+the environment when the profile is used, so the secret stays out of the
+file. `timeout` is a number of seconds. Both can be overridden on the
+command line with `--api-key` and `--timeout`.
 
 See [`config.example.toml`](config.example.toml) for a full annotated example.
 

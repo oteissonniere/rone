@@ -6,7 +6,7 @@
 #
 # Each [profiles.<name>] table defines a server/model profile. `base_url` and
 # `model` fall back to rone's built-in defaults when omitted; `min_confidence`
-# is optional (0..=1).
+# (0..=1), `api_key` and `timeout` (seconds) are optional.
 
 # The profile used when --profile is not given. Must name a profile below.
 default_profile = "local"
@@ -22,3 +22,8 @@ min_confidence = 0.8
 base_url = "https://api.example.com/v1"
 model = "laya-2"
 min_confidence = 0.9
+# API key sent as a Bearer token. Use "env:VAR" to read it from the
+# environment instead of writing the secret in this file.
+# api_key = "env:RONE_API_KEY"
+# Request timeout in seconds.
+# timeout = 30
