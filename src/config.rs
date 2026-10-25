@@ -36,6 +36,13 @@ pub struct Profile {
     /// Optional default confidence threshold (0..=1) for this profile.
     #[serde(default)]
     pub min_confidence: Option<f64>,
+    /// API key for the inference endpoint, sent as a Bearer token. May be a
+    /// literal value or `env:VAR` to read it from the environment.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Request timeout in seconds.
+    #[serde(default)]
+    pub timeout: Option<u64>,
 }
 
 impl Default for Profile {
@@ -44,6 +51,8 @@ impl Default for Profile {
             base_url: default_base_url(),
             model: default_model(),
             min_confidence: None,
+            api_key: None,
+            timeout: None,
         }
     }
 }
@@ -94,6 +103,23 @@ impl Config {
             .with_context(|| format!("unknown profile '{name}'"))?
             .clone();
         Ok(profile)
+    }
+}
+
+/// Resolve an api_key value: a plain string is used as-is; a value of the
+/// form `env:VAR` is replaced by the contents of the environment variable
+/// `VAR` (an error if it is missing or empty).
+pub fn resolve_api_key(raw: &str) -> Result<String> {
+    match raw.strip_prefix("env:") {
+        Some(var) => {
+            let value = std::env::var(var)
+                .with_context(|| format!("api_key references env var '{var}', which is not set"))?;
+            if value.is_empty() {
+                bail!("api_key references env var '{var}', which is empty");
+            }
+            Ok(value)
+        }
+        None => Ok(raw.to_string()),
     }
 }
 
@@ -270,5 +296,57 @@ model = "laya-2"
         let path =
             std::env::temp_dir().join(format!("rone-cfg-missing-{}.toml", std::process::id()));
         assert!(load_config(Some(&path)).is_err());
+    }
+
+    #[test]
+    fn parse_reads_api_key_and_timeout() {
+        let cfg = Config::parse(
+            r#"[profiles.a]
+api_key = "env:RONE_API_KEY"
+timeout = 30
+"#,
+        )
+        .unwrap();
+        let a = &cfg.profiles["a"];
+        // The raw value is kept as-is; env resolution happens at use time.
+        assert_eq!(a.api_key.as_deref(), Some("env:RONE_API_KEY"));
+        assert_eq!(a.timeout, Some(30));
+    }
+
+    #[test]
+    fn parse_defaults_api_key_and_timeout_to_none() {
+        let cfg = Config::parse("[profiles.a]").unwrap();
+        let a = &cfg.profiles["a"];
+        assert_eq!(a.api_key, None);
+        assert_eq!(a.timeout, None);
+    }
+
+    #[test]
+    fn resolve_api_key_returns_literal_as_is() {
+        assert_eq!(resolve_api_key("sk-abc").unwrap(), "sk-abc");
+    }
+
+    #[test]
+    fn resolve_api_key_reads_env_var() {
+        unsafe { std::env::set_var("RONE_TEST_API_KEY", "from-env") };
+        assert_eq!(
+            resolve_api_key("env:RONE_TEST_API_KEY").unwrap(),
+            "from-env"
+        );
+        unsafe { std::env::remove_var("RONE_TEST_API_KEY") };
+    }
+
+    #[test]
+    fn resolve_api_key_env_missing_is_an_error() {
+        let err = resolve_api_key("env:RONE_TEST_NOT_SET").unwrap_err();
+        assert!(err.to_string().contains("RONE_TEST_NOT_SET"));
+    }
+
+    #[test]
+    fn resolve_api_key_env_empty_is_an_error() {
+        unsafe { std::env::set_var("RONE_TEST_EMPTY_KEY", "") };
+        let err = resolve_api_key("env:RONE_TEST_EMPTY_KEY").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+        unsafe { std::env::remove_var("RONE_TEST_EMPTY_KEY") };
     }
 }
