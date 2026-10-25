@@ -4,8 +4,9 @@
 [System One](#background) decision models (Clef, Laya, Jev and compatible
 models) pleasant to use from the command line.
 
-> **Status: early design.** Nothing below is implemented yet. The interface
-> shown in this README is a draft meant to guide development, not a promise.
+> **Status: working skeleton.** A first `rone ask` CLI is implemented and
+> tested against a live `/v1/systemone` endpoint. The interface shown below is
+> still a draft and names/flags may change.
 
 ## Why
 
@@ -41,7 +42,38 @@ A raw request looks roughly like this:
     "department": {
       "type": "choice",
       "instructions": "Who should handle this?",
-      "criteria": ["billing", "technical", "sales"]
+      "criteria": {
+        "billing": "billing issues",
+        "technical": "technical issues",
+        "sales": "sales issues"
+      }
+    }
+  }
+}
+```
+
+> Note: the endpoint expects `criteria` to be an **object** (option →
+> description), not an array. This was verified against a live server.
+
+The response is keyed by question id, with the shape below (verified against a
+live endpoint):
+
+```json
+{
+  "answers": {
+    "department": {
+      "type": "choice",
+      "choice": "billing",
+      "confidence": 0.954,
+      "probabilities": {
+        "billing": 0.970,
+        "technical": 0.022,
+        "sales": 0.008
+      }
+    },
+    "needs_human": {
+      "type": "noul",
+      "noul": 0.344
     }
   }
 }
@@ -60,6 +92,25 @@ A raw request looks roughly like this:
 - **Helpful validation**: catch common mistakes before sending (empty option
   lists, too many options in one `choice` question, low confidence), with clear
   messages instead of raw server errors.
+
+## Progress
+
+- **Working CLI** (`src/main.rs`): `rone ask` built on `clap`, with `tokio` /
+  `reqwest` for the HTTP call and `serde` / `serde_json` / `toml` for
+  (de)serialization.
+- **Presets**: reusable question sets loaded from `presets/<name>.toml`
+  (see `presets/triage.toml`).
+- **Parametrizable input**: text from `--text`, `--file`, or stdin.
+- **Request building**: sends a `/v1/systemone` request with `criteria` as an
+  object (option → description), as the endpoint expects.
+- **Readable output**: a probability table (`*` marks the chosen option) and a
+  `--json` mode for scripts.
+- **Validation**: rejects empty `choice` option lists and warns when a single
+  `choice` question has many options.
+- **Verified** against a live `/v1/systemone` endpoint (LM Studio).
+
+Still to come (see [Possible later steps](#possible-later-steps)): a reusable
+library crate, confidence threshold mode, batch mode and MCP server mode.
 
 ## Draft interface
 
