@@ -1,0 +1,11 @@
+# Example preset (see README "Draft interface").
+# Questions are keyed by id and reused by name with `rone ask --preset triage`.
+
+[questions.department]
+type = "choice"
+instructions = "Who should handle this?"
+options = ["billing", "technical", "sales"]
+
+[questions.needs_human]
+type = "noul"
+instructions = "A human must handle this."
