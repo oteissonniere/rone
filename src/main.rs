@@ -51,6 +51,36 @@ enum Command {
         #[arg(long = "var", value_name = "NAME=VALUE")]
         vars: Vec<String>,
     },
+    /// Ask a System One model over many inputs (one state per line).
+    Batch {
+        /// Preset name, loaded from presets/<name>.toml
+        #[arg(long)]
+        preset: String,
+
+        /// Read one state per line from a file (or stdin)
+        #[arg(short, long, value_name = "PATH")]
+        file: Option<PathBuf>,
+
+        /// Base URL of the /v1/systemone-compatible endpoint
+        #[arg(long, default_value = "http://localhost:1234/v1")]
+        base_url: String,
+
+        /// Model name sent in the request
+        #[arg(long, default_value = "laya")]
+        model: String,
+
+        /// Output machine-readable JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Only accept answers with at least this much confidence (0..=1)
+        #[arg(long, value_parser = parse_confidence, value_name = "F")]
+        min_confidence: Option<f64>,
+
+        /// Variable injected into question instructions as `{{name}}` (repeatable)
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        vars: Vec<String>,
+    },
 }
 
 /// A preset file: `presets/<name>.toml`.
@@ -150,6 +180,30 @@ fn read_state(text: &Option<String>, file: &Option<PathBuf>) -> Result<String> {
         bail!("empty input: provide text with --text, --file, or stdin");
     }
     Ok(state)
+}
+
+/// One state per line from --file or stdin; blank lines are skipped.
+fn read_states(file: &Option<PathBuf>) -> Result<Vec<String>> {
+    let raw = if let Some(f) = file {
+        std::fs::read_to_string(f)
+            .with_context(|| format!("failed to read file {}", f.display()))?
+    } else {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .context("failed to read stdin")?;
+        buf
+    };
+    let states: Vec<String> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect();
+    if states.is_empty() {
+        bail!("empty input: provide one state per line with --file or stdin");
+    }
+    Ok(states)
 }
 
 /// Parse a confidence threshold between 0 and 1 (clap value parser).
@@ -323,6 +377,27 @@ fn render_answers(answers: &BTreeMap<String, Value>, as_json: bool) -> String {
     out
 }
 
+/// Render a batch of (input, answers) pairs: one numbered block per input in
+/// text mode, a JSON array of `{"input", "answers"}` objects in JSON mode.
+fn render_batch(results: &[(String, BTreeMap<String, Value>)], as_json: bool) -> String {
+    if as_json {
+        let arr: Vec<Value> = results
+            .iter()
+            .map(|(input, answers)| json!({ "input": input, "answers": answers }))
+            .collect();
+        return serde_json::to_string_pretty(&arr).unwrap_or_default();
+    }
+    let mut out = String::new();
+    for (i, (input, answers)) in results.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("#{}: {input}\n", i + 1));
+        out.push_str(&render_answers(answers, false));
+    }
+    out
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -361,6 +436,49 @@ async fn main() -> Result<()> {
                     // Exit code 3: answers received, but below the confidence threshold.
                     std::process::exit(3);
                 }
+            }
+        }
+        Command::Batch {
+            preset,
+            file,
+            base_url,
+            model,
+            json,
+            min_confidence,
+            vars,
+        } => {
+            let preset = load_preset(&preset)?;
+            validate(&preset)?;
+            let states = read_states(&file)?;
+            let vars = parse_vars(&vars)?;
+            let mut results: Vec<(String, BTreeMap<String, Value>)> = Vec::new();
+            let mut any_below = false;
+            for (i, state) in states.iter().enumerate() {
+                let request = build_request(&model, state, &preset, &vars)?;
+                let response = send(&base_url, &request).await?;
+                let answers = extract_answers(&response);
+                if let Some(min) = min_confidence {
+                    for (id, conf) in &below_threshold(&answers, min) {
+                        any_below = true;
+                        match conf {
+                            Some(c) => eprintln!(
+                                "warning: input #{}: answer '{id}': confidence {c:.2} is below threshold {min:.2}",
+                                i + 1
+                            ),
+                            None => eprintln!(
+                                "warning: input #{}: answer '{id}': no confidence reported, threshold is {min:.2}",
+                                i + 1
+                            ),
+                        }
+                    }
+                }
+                results.push((state.clone(), answers));
+            }
+            println!("{}", render_batch(&results, json));
+            if any_below {
+                // Exit code 3: answers received, but at least one is below the
+                // confidence threshold.
+                std::process::exit(3);
             }
         }
     }
@@ -678,5 +796,58 @@ instructions = "A human must handle this."
             req["questions"]["department"]["instructions"],
             "Route this to billing."
         );
+    }
+
+    #[test]
+    fn read_states_splits_lines_and_skips_blank() {
+        let path = std::env::temp_dir().join(format!("rone-batch-{}.txt", std::process::id()));
+        std::fs::write(&path, "first ticket\n\n  second ticket  \n\n").unwrap();
+        let states = read_states(&Some(path.clone())).unwrap();
+        assert_eq!(states, vec!["first ticket", "second ticket"]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_states_rejects_empty_input() {
+        let path =
+            std::env::temp_dir().join(format!("rone-batch-empty-{}.txt", std::process::id()));
+        std::fs::write(&path, "   \n\n").unwrap();
+        assert!(read_states(&Some(path.clone())).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn render_batch_text_has_numbered_blocks() {
+        let answers = extract_answers(&json!({
+            "answers": {
+                "department": {
+                    "type": "choice",
+                    "choice": "billing",
+                    "probabilities": {"billing": 0.97, "technical": 0.03}
+                }
+            }
+        }));
+        let results = vec![("I was billed twice".to_string(), answers)];
+        let out = render_batch(&results, false);
+        assert!(out.starts_with("#1: I was billed twice\n"));
+        assert!(out.contains("*billing"));
+        assert!(out.contains("97.00%"));
+    }
+
+    #[test]
+    fn render_batch_json_is_array_of_input_answers() {
+        let response = json!({"answers": {"a": {"noul": 0.5}}});
+        let answers = extract_answers(&response);
+        let results = vec![
+            ("first".to_string(), answers.clone()),
+            ("second".to_string(), answers),
+        ];
+        let out = render_batch(&results, true);
+        let parsed: Value = serde_json::from_str(&out).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["input"], "first");
+        assert_eq!(arr[1]["input"], "second");
+        assert_eq!(arr[0]["answers"]["a"]["noul"], 0.5);
     }
 }

@@ -117,10 +117,13 @@ live endpoint):
 - **Variables**: `--var NAME=VALUE` (repeatable) injects values into question
   instructions via `{{name}}` placeholders; an unknown placeholder is a
   clear error before anything is sent.
+- **Batch mode**: `rone batch` runs the same preset over many inputs (one
+  state per line, from `--file` or stdin); `--json` emits an array of
+  `{"input", "answers"}` objects for scripts.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
 
 Still to come (see [Possible later steps](#possible-later-steps)): a reusable
-library crate, batch mode and MCP server mode.
+library crate and MCP server mode.
 
 ## Draft interface
 
@@ -159,13 +162,15 @@ rone ask --preset triage --text "I was billed twice" --min-confidence 0.9
 
 # inject variables into question instructions ({{name}} placeholders in the preset)
 rone ask --preset triage --text "I was billed twice" --var team=support --var lang=fr
+
+# many inputs at once: one state per line, from a file or stdin
+rone batch --preset triage --file tickets.txt
+cat tickets.txt | rone batch --preset triage --json
 ```
 
 ## Possible later steps
 
 - Reusable library crate alongside the CLI
-- Confidence threshold mode (act only when the model is confident enough)
-- Batch mode over many inputs
 - MCP server mode, so agents can call your presets as tools
 
 ## Related projects
