@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use serde_json::Value;
 
-use rone::config::{Config, Profile, load_config};
+use rone::config::{Config, Profile, load_config, resolve_api_key};
 use rone::{
     below_threshold, build_request, extract_answers, load_preset, parse_vars, read_state,
     read_states, render_answers, render_batch, validate,
@@ -41,7 +42,7 @@ enum Command {
         #[arg(short, long, value_name = "PATH")]
         file: Option<PathBuf>,
 
-        /// Profile from the config file (sets base_url, model, min_confidence)
+        /// Profile from the config file (sets base_url, model, min_confidence, api_key, timeout)
         #[arg(long, value_name = "NAME")]
         profile: Option<String>,
 
@@ -60,6 +61,14 @@ enum Command {
         /// Only accept answers with at least this much confidence (0..=1)
         #[arg(long, value_parser = parse_confidence, value_name = "F")]
         min_confidence: Option<f64>,
+
+        /// API key sent as a Bearer token (overrides the profile; `env:VAR` reads from the environment)
+        #[arg(long, value_name = "KEY")]
+        api_key: Option<String>,
+
+        /// Request timeout in seconds (overrides the profile)
+        #[arg(long, value_name = "SECONDS")]
+        timeout: Option<u64>,
 
         /// Variable injected into question instructions as `{{name}}` (repeatable)
         #[arg(long = "var", value_name = "NAME=VALUE")]
@@ -75,7 +84,7 @@ enum Command {
         #[arg(short, long, value_name = "PATH")]
         file: Option<PathBuf>,
 
-        /// Profile from the config file (sets base_url, model, min_confidence)
+        /// Profile from the config file (sets base_url, model, min_confidence, api_key, timeout)
         #[arg(long, value_name = "NAME")]
         profile: Option<String>,
 
@@ -94,6 +103,14 @@ enum Command {
         /// Only accept answers with at least this much confidence (0..=1)
         #[arg(long, value_parser = parse_confidence, value_name = "F")]
         min_confidence: Option<f64>,
+
+        /// API key sent as a Bearer token (overrides the profile; `env:VAR` reads from the environment)
+        #[arg(long, value_name = "KEY")]
+        api_key: Option<String>,
+
+        /// Request timeout in seconds (overrides the profile)
+        #[arg(long, value_name = "SECONDS")]
+        timeout: Option<u64>,
 
         /// Variable injected into question instructions as `{{name}}` (repeatable)
         #[arg(long = "var", value_name = "NAME=VALUE")]
@@ -114,32 +131,65 @@ fn parse_confidence(value: &str) -> Result<f64, String> {
     Ok(v)
 }
 
-/// Resolve the effective `(base_url, model, min_confidence)`: explicit
-/// command-line flags win, then the selected profile, then built-in defaults.
+/// The effective request target after merging explicit CLI flags, the
+/// selected profile, and built-in defaults.
+struct Target {
+    base_url: String,
+    model: String,
+    min_confidence: Option<f64>,
+    api_key: Option<String>,
+    timeout: Option<u64>,
+}
+
+/// Resolve the effective target: explicit command-line flags win, then the
+/// selected profile, then built-in defaults.
 fn resolve_target(
     config: Option<&Config>,
     profile: Option<&str>,
     base_url: Option<&str>,
     model: Option<&str>,
     min_confidence: Option<f64>,
-) -> Result<(String, String, Option<f64>)> {
+    api_key: Option<&str>,
+    timeout: Option<u64>,
+) -> Result<Target> {
     let profile = match config {
         Some(cfg) => cfg.resolve_profile(profile)?,
         None => Profile::default(),
     };
-    Ok((
-        base_url.map(str::to_string).unwrap_or(profile.base_url),
-        model.map(str::to_string).unwrap_or(profile.model),
-        min_confidence.or(profile.min_confidence),
-    ))
+    let api_key = match api_key {
+        Some(k) => Some(k.to_string()),
+        None => profile
+            .api_key
+            .as_deref()
+            .map(resolve_api_key)
+            .transpose()?,
+    };
+    Ok(Target {
+        base_url: base_url.map(str::to_string).unwrap_or(profile.base_url),
+        model: model.map(str::to_string).unwrap_or(profile.model),
+        min_confidence: min_confidence.or(profile.min_confidence),
+        api_key,
+        timeout: timeout.or(profile.timeout),
+    })
 }
 
-async fn send(base_url: &str, request: &Value) -> Result<Value> {
+async fn send(
+    base_url: &str,
+    request: &Value,
+    api_key: Option<&str>,
+    timeout: Option<u64>,
+) -> Result<Value> {
     let url = format!("{}/systemone", base_url.trim_end_matches('/'));
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .json(request)
+    let mut builder = reqwest::Client::builder();
+    if let Some(t) = timeout {
+        builder = builder.timeout(Duration::from_secs(t));
+    }
+    let client = builder.build().context("failed to build HTTP client")?;
+    let mut req = client.post(&url).json(request);
+    if let Some(key) = api_key {
+        req = req.header("Authorization", format!("Bearer {key}"));
+    }
+    let resp = req
         .send()
         .await
         .with_context(|| format!("failed to reach {url}"))?;
@@ -169,24 +219,34 @@ async fn main() -> Result<()> {
             model,
             json,
             min_confidence,
+            api_key,
+            timeout,
             vars,
         } => {
-            let (base_url, model, min_confidence) = resolve_target(
+            let target = resolve_target(
                 config.as_ref(),
                 profile.as_deref(),
                 base_url.as_deref(),
                 model.as_deref(),
                 min_confidence,
+                api_key.as_deref(),
+                timeout,
             )?;
             let preset = load_preset(&preset)?;
             validate(&preset)?;
             let state = read_state(&text, &file)?;
             let vars = parse_vars(&vars)?;
-            let request = build_request(&model, &state, &preset, &vars)?;
-            let response = send(&base_url, &request).await?;
+            let request = build_request(&target.model, &state, &preset, &vars)?;
+            let response = send(
+                &target.base_url,
+                &request,
+                target.api_key.as_deref(),
+                target.timeout,
+            )
+            .await?;
             let answers = extract_answers(&response);
             println!("{}", render_answers(&answers, json));
-            if let Some(min) = min_confidence {
+            if let Some(min) = target.min_confidence {
                 let failed = below_threshold(&answers, min);
                 for (id, conf) in &failed {
                     match conf {
@@ -212,14 +272,18 @@ async fn main() -> Result<()> {
             model,
             json,
             min_confidence,
+            api_key,
+            timeout,
             vars,
         } => {
-            let (base_url, model, min_confidence) = resolve_target(
+            let target = resolve_target(
                 config.as_ref(),
                 profile.as_deref(),
                 base_url.as_deref(),
                 model.as_deref(),
                 min_confidence,
+                api_key.as_deref(),
+                timeout,
             )?;
             let preset = load_preset(&preset)?;
             validate(&preset)?;
@@ -228,10 +292,16 @@ async fn main() -> Result<()> {
             let mut results: Vec<(String, BTreeMap<String, Value>)> = Vec::new();
             let mut any_below = false;
             for (i, state) in states.iter().enumerate() {
-                let request = build_request(&model, state, &preset, &vars)?;
-                let response = send(&base_url, &request).await?;
+                let request = build_request(&target.model, state, &preset, &vars)?;
+                let response = send(
+                    &target.base_url,
+                    &request,
+                    target.api_key.as_deref(),
+                    target.timeout,
+                )
+                .await?;
                 let answers = extract_answers(&response);
-                if let Some(min) = min_confidence {
+                if let Some(min) = target.min_confidence {
                     for (id, conf) in &below_threshold(&answers, min) {
                         any_below = true;
                         match conf {
