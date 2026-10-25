@@ -1,0 +1,24 @@
+# Example rone config file.
+#
+# Copy this to `rone.toml` (in your working directory) or to
+# `~/.config/rone/rone.toml`, then adjust the values. A file named
+# `config.example.toml` is NOT picked up automatically.
+#
+# Each [profiles.<name>] table defines a server/model profile. `base_url` and
+# `model` fall back to rone's built-in defaults when omitted; `min_confidence`
+# is optional (0..=1).
+
+# The profile used when --profile is not given. Must name a profile below.
+default_profile = "local"
+
+[profiles.local]
+# A local /v1/systemone endpoint (e.g. LM Studio).
+base_url = "http://localhost:1234/v1"
+model = "laya"
+# Only accept answers with at least this confidence (0..=1).
+min_confidence = 0.8
+
+[profiles.production]
+base_url = "https://api.example.com/v1"
+model = "laya-2"
+min_confidence = 0.9

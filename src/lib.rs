@@ -12,6 +12,8 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub mod config;
+
 /// A preset file: `presets/<name>.toml`.
 #[derive(Deserialize)]
 pub struct Preset {

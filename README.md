@@ -124,6 +124,9 @@ live endpoint):
 - **Batch mode**: `rone batch` runs the same preset over many inputs (one
   state per line, from `--file` or stdin); `--json` emits an array of
   `{"input", "answers"}` objects for scripts.
+- **Profiles**: a config file (`rone.toml`) defines named server/model
+  profiles (`base_url`, `model`, `min_confidence`); pick one with `--profile`
+  or set a `default_profile`. Command-line flags override the profile.
 - **MCP server mode**: `rone mcp` serves the presets as MCP tools over stdio
   (`list_presets`, `ask`, `batch`), so AI agents can call them.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
@@ -170,6 +173,51 @@ rone ask --preset triage --text "I was billed twice" --var team=support --var la
 rone batch --preset triage --file tickets.txt
 cat tickets.txt | rone batch --preset triage --json
 ```
+
+### Configuration file
+
+Rone reads an optional TOML config file to define named **profiles** — a
+`base_url`, a `model` and an optional `min_confidence` bundled together. The
+first existing file in this order is used:
+
+1. `--config <path>` (explicit)
+2. `$RONE_CONFIG`
+3. `./rone.toml` (current directory)
+4. `~/.config/rone/rone.toml` (or `$XDG_CONFIG_HOME/rone/rone.toml`)
+
+If none exists, rone uses its built-in defaults (`http://localhost:1234/v1`,
+model `laya`).
+
+```toml
+# rone.toml
+default_profile = "local"
+
+[profiles.local]
+base_url = "http://localhost:1234/v1"
+model = "laya"
+min_confidence = 0.8
+
+[profiles.production]
+base_url = "https://api.example.com/v1"
+model = "laya-2"
+```
+
+Pick a profile with `--profile`; without it, `default_profile` is used (and
+without that, the built-in defaults). Explicit flags always win over the
+profile:
+
+```bash
+# use the "production" profile
+rone ask --preset triage --profile production --text "I was billed twice"
+
+# the profile sets base_url/model, but a flag overrides it
+rone ask --preset triage --profile local --model laya-2 --text "..."
+
+# point at a specific config file
+rone ask --preset triage --config ./ci.rone.toml --profile production --text "..."
+```
+
+See [`config.example.toml`](config.example.toml) for a full annotated example.
 
 ### MCP server
 

@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use serde_json::Value;
 
+use rone::config::{Config, Profile, load_config};
 use rone::{
     below_threshold, build_request, extract_answers, load_preset, parse_vars, read_state,
     read_states, render_answers, render_batch, validate,
@@ -16,6 +17,10 @@ mod mcp;
 #[derive(Parser)]
 #[command(name = "rone", version, about)]
 struct Cli {
+    /// Path to the config file (defaults to rone.toml, then ~/.config/rone/rone.toml)
+    #[arg(long, global = true, value_name = "PATH")]
+    config: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -36,13 +41,17 @@ enum Command {
         #[arg(short, long, value_name = "PATH")]
         file: Option<PathBuf>,
 
-        /// Base URL of the /v1/systemone-compatible endpoint
-        #[arg(long, default_value = "http://localhost:1234/v1")]
-        base_url: String,
+        /// Profile from the config file (sets base_url, model, min_confidence)
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
 
-        /// Model name sent in the request
-        #[arg(long, default_value = "laya")]
-        model: String,
+        /// Base URL of the /v1/systemone-compatible endpoint (overrides the profile)
+        #[arg(long, value_name = "URL")]
+        base_url: Option<String>,
+
+        /// Model name sent in the request (overrides the profile)
+        #[arg(long, value_name = "NAME")]
+        model: Option<String>,
 
         /// Output machine-readable JSON
         #[arg(long)]
@@ -66,13 +75,17 @@ enum Command {
         #[arg(short, long, value_name = "PATH")]
         file: Option<PathBuf>,
 
-        /// Base URL of the /v1/systemone-compatible endpoint
-        #[arg(long, default_value = "http://localhost:1234/v1")]
-        base_url: String,
+        /// Profile from the config file (sets base_url, model, min_confidence)
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
 
-        /// Model name sent in the request
-        #[arg(long, default_value = "laya")]
-        model: String,
+        /// Base URL of the /v1/systemone-compatible endpoint (overrides the profile)
+        #[arg(long, value_name = "URL")]
+        base_url: Option<String>,
+
+        /// Model name sent in the request (overrides the profile)
+        #[arg(long, value_name = "NAME")]
+        model: Option<String>,
 
         /// Output machine-readable JSON
         #[arg(long)]
@@ -101,6 +114,26 @@ fn parse_confidence(value: &str) -> Result<f64, String> {
     Ok(v)
 }
 
+/// Resolve the effective `(base_url, model, min_confidence)`: explicit
+/// command-line flags win, then the selected profile, then built-in defaults.
+fn resolve_target(
+    config: Option<&Config>,
+    profile: Option<&str>,
+    base_url: Option<&str>,
+    model: Option<&str>,
+    min_confidence: Option<f64>,
+) -> Result<(String, String, Option<f64>)> {
+    let profile = match config {
+        Some(cfg) => cfg.resolve_profile(profile)?,
+        None => Profile::default(),
+    };
+    Ok((
+        base_url.map(str::to_string).unwrap_or(profile.base_url),
+        model.map(str::to_string).unwrap_or(profile.model),
+        min_confidence.or(profile.min_confidence),
+    ))
+}
+
 async fn send(base_url: &str, request: &Value) -> Result<Value> {
     let url = format!("{}/systemone", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
@@ -124,17 +157,27 @@ async fn send(base_url: &str, request: &Value) -> Result<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config_path = cli.config;
+    let config = load_config(config_path.as_deref())?;
     match cli.command {
         Command::Ask {
             preset,
             text,
             file,
+            profile,
             base_url,
             model,
             json,
             min_confidence,
             vars,
         } => {
+            let (base_url, model, min_confidence) = resolve_target(
+                config.as_ref(),
+                profile.as_deref(),
+                base_url.as_deref(),
+                model.as_deref(),
+                min_confidence,
+            )?;
             let preset = load_preset(&preset)?;
             validate(&preset)?;
             let state = read_state(&text, &file)?;
@@ -164,12 +207,20 @@ async fn main() -> Result<()> {
         Command::Batch {
             preset,
             file,
+            profile,
             base_url,
             model,
             json,
             min_confidence,
             vars,
         } => {
+            let (base_url, model, min_confidence) = resolve_target(
+                config.as_ref(),
+                profile.as_deref(),
+                base_url.as_deref(),
+                model.as_deref(),
+                min_confidence,
+            )?;
             let preset = load_preset(&preset)?;
             validate(&preset)?;
             let states = read_states(&file)?;
