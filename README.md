@@ -100,13 +100,17 @@ live endpoint):
   (de)serialization.
 - **Presets**: reusable question sets loaded from `presets/<name>.toml`
   (see `presets/triage.toml`).
+- **Option descriptions**: an optional `criteria` table in a preset
+  describes each `choice` option; without one, the option name is its own
+  description.
 - **Parametrizable input**: text from `--text`, `--file`, or stdin.
 - **Request building**: sends a `/v1/systemone` request with `criteria` as an
   object (option → description), as the endpoint expects.
 - **Readable output**: a probability table (`*` marks the chosen option) and a
   `--json` mode for scripts.
-- **Validation**: rejects empty `choice` option lists and warns when a single
-  `choice` question has many options.
+- **Validation**: rejects empty `choice` option lists and criteria entries
+  for unknown options, and warns when a single `choice` question has many
+  options.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
 
 Still to come (see [Possible later steps](#possible-later-steps)): a reusable
@@ -122,6 +126,12 @@ Illustrative only; names and flags may change.
 type = "choice"
 instructions = "Who should handle this?"
 options = ["billing", "technical", "sales"]
+
+[questions.department.criteria]
+# optional: describe each option for the model
+billing = "billing issues"
+technical = "technical issues"
+sales = "sales issues"
 
 [questions.needs_human]
 type = "noul"

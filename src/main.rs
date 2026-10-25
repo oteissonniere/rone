@@ -58,6 +58,10 @@ struct QuestionDef {
     instructions: String,
     #[serde(default)]
     options: Vec<String>,
+    /// Optional option → description, sent as `criteria` for `choice`
+    /// questions. Options without a description use their own name.
+    #[serde(default)]
+    criteria: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -101,6 +105,11 @@ fn validate(preset: &Preset) -> Result<()> {
         if q.kind == QuestionType::Choice {
             if q.options.is_empty() {
                 bail!("question '{id}': a choice question needs at least one option");
+            }
+            for option in q.criteria.keys() {
+                if !q.options.contains(option) {
+                    bail!("question '{id}': criteria entry for unknown option '{option}'");
+                }
             }
             if q.options.len() > 10 {
                 eprintln!(
@@ -147,7 +156,9 @@ fn build_request(model: &str, state: &str, preset: &Preset) -> Value {
             // The endpoint expects `criteria` as an object (option -> description).
             let mut criteria = serde_json::Map::new();
             for opt in &q.options {
-                criteria.insert(opt.clone(), json!(opt));
+                // An option without a description is described by its own name.
+                let description = q.criteria.get(opt).cloned().unwrap_or_else(|| opt.clone());
+                criteria.insert(opt.clone(), json!(description));
             }
             qval["criteria"] = Value::Object(criteria);
         }
@@ -251,10 +262,22 @@ mod tests {
     use super::*;
 
     fn question(kind: QuestionType, options: Vec<&str>) -> QuestionDef {
+        question_with_criteria(kind, options, &[])
+    }
+
+    fn question_with_criteria(
+        kind: QuestionType,
+        options: Vec<&str>,
+        criteria: &[(&str, &str)],
+    ) -> QuestionDef {
         QuestionDef {
             kind,
             instructions: "Pick one.".to_string(),
             options: options.into_iter().map(String::from).collect(),
+            criteria: criteria
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         }
     }
 
@@ -276,6 +299,11 @@ type = "choice"
 instructions = "Who should handle this?"
 options = ["billing", "technical", "sales"]
 
+[questions.department.criteria]
+billing = "billing issues"
+technical = "technical issues"
+sales = "sales issues"
+
 [questions.needs_human]
 type = "noul"
 instructions = "A human must handle this."
@@ -287,6 +315,7 @@ instructions = "A human must handle this."
         let dept = &preset.questions["department"];
         assert_eq!(dept.kind, QuestionType::Choice);
         assert_eq!(dept.options, vec!["billing", "technical", "sales"]);
+        assert_eq!(dept.criteria["billing"], "billing issues");
         assert_eq!(preset.questions["needs_human"].kind, QuestionType::Noul);
     }
 
@@ -314,6 +343,13 @@ instructions = "A human must handle this."
     }
 
     #[test]
+    fn validate_rejects_criteria_for_unknown_option() {
+        let q = question_with_criteria(QuestionType::Choice, vec!["x"], &[("y", "nope")]);
+        let preset = preset_of(vec![("a", q)]);
+        assert!(validate(&preset).is_err());
+    }
+
+    #[test]
     fn build_request_sends_model_state_and_questions() {
         let preset = preset_of(vec![
             (
@@ -334,6 +370,25 @@ instructions = "A human must handle this."
         assert_eq!(dept["criteria"]["billing"], "billing");
         assert_eq!(dept["criteria"]["technical"], "technical");
         assert!(req["questions"]["needs_human"].get("criteria").is_none());
+    }
+
+    #[test]
+    fn build_request_uses_option_descriptions_when_present() {
+        let preset = preset_of(vec![(
+            "department",
+            question_with_criteria(
+                QuestionType::Choice,
+                vec!["billing", "technical"],
+                &[("billing", "billing issues")],
+            ),
+        )]);
+
+        let req = build_request("laya", "I was billed twice", &preset);
+        let dept = &req["questions"]["department"];
+        // A described option uses its description...
+        assert_eq!(dept["criteria"]["billing"], "billing issues");
+        // ...an undescribed option falls back to its own name.
+        assert_eq!(dept["criteria"]["technical"], "technical");
     }
 
     #[test]

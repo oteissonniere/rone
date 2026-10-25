@@ -6,6 +6,12 @@ type = "choice"
 instructions = "Who should handle this?"
 options = ["billing", "technical", "sales"]
 
+[questions.department.criteria]
+# optional: describe each option for the model
+billing = "billing issues"
+technical = "technical issues"
+sales = "sales issues"
+
 [questions.needs_human]
 type = "noul"
 instructions = "A human must handle this."
