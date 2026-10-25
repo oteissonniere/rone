@@ -46,6 +46,10 @@ enum Command {
         /// Only accept answers with at least this much confidence (0..=1)
         #[arg(long, value_parser = parse_confidence, value_name = "F")]
         min_confidence: Option<f64>,
+
+        /// Variable injected into question instructions as `{{name}}` (repeatable)
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        vars: Vec<String>,
     },
 }
 
@@ -159,13 +163,60 @@ fn parse_confidence(value: &str) -> Result<f64, String> {
     Ok(v)
 }
 
-/// Build the `/v1/systemone` request body.
-fn build_request(model: &str, state: &str, preset: &Preset) -> Value {
+/// Parse `--var NAME=VALUE` pairs into an ordered map. The value may contain
+/// further `=` characters; the split happens at the first one.
+fn parse_vars(vars: &[String]) -> Result<BTreeMap<String, String>> {
+    let mut map = BTreeMap::new();
+    for var in vars {
+        let (name, value) = var
+            .split_once('=')
+            .with_context(|| format!("invalid variable '{var}': expected NAME=VALUE"))?;
+        if name.is_empty() {
+            bail!("invalid variable '{var}': the name must not be empty");
+        }
+        map.insert(name.to_string(), value.to_string());
+    }
+    Ok(map)
+}
+
+/// Replace `{{name}}` placeholders in `text` with the given variables.
+/// An unknown placeholder is an error: better to fail than to send it to the
+/// model.
+fn substitute(text: &str, vars: &BTreeMap<String, String>) -> Result<String> {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start + 2..];
+        let end = after_open
+            .find("}}")
+            .with_context(|| "unterminated '{{' placeholder in question instructions")?;
+        let name = after_open[..end].trim();
+        let value = vars
+            .get(name)
+            .with_context(|| format!("unknown variable '{{{name}}}' in question instructions"))?;
+        out.push_str(value);
+        rest = &after_open[end + 2..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// Build the `/v1/systemone` request body. `vars` are substituted into the
+/// instructions of every question.
+fn build_request(
+    model: &str,
+    state: &str,
+    preset: &Preset,
+    vars: &BTreeMap<String, String>,
+) -> Result<Value> {
     let mut questions = serde_json::Map::new();
     for (id, q) in &preset.questions {
+        let instructions =
+            substitute(&q.instructions, vars).with_context(|| format!("in question '{id}'"))?;
         let mut qval = json!({
             "type": q.kind.as_str(),
-            "instructions": q.instructions,
+            "instructions": instructions,
         });
         if q.kind == QuestionType::Choice {
             // The endpoint expects `criteria` as an object (option -> description).
@@ -179,11 +230,11 @@ fn build_request(model: &str, state: &str, preset: &Preset) -> Value {
         }
         questions.insert(id.clone(), qval);
     }
-    json!({
+    Ok(json!({
         "model": model,
         "state": state,
         "questions": questions,
-    })
+    }))
 }
 
 async fn send(base_url: &str, request: &Value) -> Result<Value> {
@@ -284,11 +335,13 @@ async fn main() -> Result<()> {
             model,
             json,
             min_confidence,
+            vars,
         } => {
             let preset = load_preset(&preset)?;
             validate(&preset)?;
             let state = read_state(&text, &file)?;
-            let request = build_request(&model, &state, &preset);
+            let vars = parse_vars(&vars)?;
+            let request = build_request(&model, &state, &preset, &vars)?;
             let response = send(&base_url, &request).await?;
             let answers = extract_answers(&response);
             println!("{}", render_answers(&answers, json));
@@ -416,7 +469,7 @@ instructions = "A human must handle this."
             ("needs_human", question(QuestionType::Noul, vec![])),
         ]);
 
-        let req = build_request("laya", "I was billed twice", &preset);
+        let req = build_request("laya", "I was billed twice", &preset, &BTreeMap::new()).unwrap();
         assert_eq!(req["model"], "laya");
         assert_eq!(req["state"], "I was billed twice");
 
@@ -440,7 +493,7 @@ instructions = "A human must handle this."
             ),
         )]);
 
-        let req = build_request("laya", "I was billed twice", &preset);
+        let req = build_request("laya", "I was billed twice", &preset, &BTreeMap::new()).unwrap();
         let dept = &req["questions"]["department"];
         // A described option uses its description...
         assert_eq!(dept["criteria"]["billing"], "billing issues");
@@ -567,5 +620,63 @@ instructions = "A human must handle this."
         });
         let answers = extract_answers(&response);
         assert!(below_threshold(&answers, 0.9).is_empty());
+    }
+
+    #[test]
+    fn parse_vars_parses_name_value_pairs() {
+        let vars =
+            parse_vars(&["dept=billing".to_string(), "note=two=equals".to_string()]).unwrap();
+        assert_eq!(vars["dept"], "billing");
+        // The split happens at the first `=`; the value may contain `=`.
+        assert_eq!(vars["note"], "two=equals");
+    }
+
+    #[test]
+    fn parse_vars_rejects_missing_equals() {
+        assert!(parse_vars(&["billing".to_string()]).is_err());
+    }
+
+    #[test]
+    fn parse_vars_rejects_empty_name() {
+        assert!(parse_vars(&["=billing".to_string()]).is_err());
+    }
+
+    #[test]
+    fn substitute_replaces_known_placeholders() {
+        let vars = parse_vars(&["dept=billing".to_string()]).unwrap();
+        assert_eq!(
+            substitute("Route this to {{dept}}.", &vars).unwrap(),
+            "Route this to billing."
+        );
+        // Text without placeholders is left untouched.
+        assert_eq!(substitute("Plain text.", &vars).unwrap(), "Plain text.");
+    }
+
+    #[test]
+    fn substitute_rejects_unknown_placeholder() {
+        let vars = parse_vars(&["dept=billing".to_string()]).unwrap();
+        assert!(substitute("Route to {{nope}}.", &vars).is_err());
+    }
+
+    #[test]
+    fn build_request_substitutes_variables_in_instructions() {
+        let preset = Preset {
+            questions: BTreeMap::from([(
+                "department".to_string(),
+                QuestionDef {
+                    kind: QuestionType::Choice,
+                    instructions: "Route this to {{dept}}.".to_string(),
+                    options: vec!["billing".to_string(), "technical".to_string()],
+                    criteria: BTreeMap::new(),
+                },
+            )]),
+        };
+        let vars = parse_vars(&["dept=billing".to_string()]).unwrap();
+
+        let req = build_request("laya", "I was billed twice", &preset, &vars).unwrap();
+        assert_eq!(
+            req["questions"]["department"]["instructions"],
+            "Route this to billing."
+        );
     }
 }

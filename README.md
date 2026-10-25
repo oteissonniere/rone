@@ -114,6 +114,9 @@ live endpoint):
 - **Confidence threshold**: `--min-confidence` accepts answers only when the
   model is confident enough; below the threshold it warns and exits with
   code 3, so scripts can act conditionally.
+- **Variables**: `--var NAME=VALUE` (repeatable) injects values into question
+  instructions via `{{name}}` placeholders; an unknown placeholder is a
+  clear error before anything is sent.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
 
 Still to come (see [Possible later steps](#possible-later-steps)): a reusable
@@ -153,6 +156,9 @@ rone ask --preset triage --file ticket.txt --json
 
 # act only when the model is confident enough (exit code 3 otherwise)
 rone ask --preset triage --text "I was billed twice" --min-confidence 0.9
+
+# inject variables into question instructions ({{name}} placeholders in the preset)
+rone ask --preset triage --text "I was billed twice" --var team=support --var lang=fr
 ```
 
 ## Possible later steps
