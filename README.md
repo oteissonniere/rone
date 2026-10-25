@@ -98,6 +98,10 @@ live endpoint):
 - **Working CLI** (`src/main.rs`): `rone ask` built on `clap`, with `tokio` /
   `reqwest` for the HTTP call and `serde` / `serde_json` / `toml` for
   (de)serialization.
+- **Library** (`src/lib.rs`): preset parsing, validation, request building,
+  answer extraction and rendering are exposed as a public Rust API in the same
+  `rone` crate; the binary is a thin CLI on top of it, with no HTTP in the
+  library.
 - **Presets**: reusable question sets loaded from `presets/<name>.toml`
   (see `presets/triage.toml`).
 - **Option descriptions**: an optional `criteria` table in a preset
@@ -122,8 +126,8 @@ live endpoint):
   `{"input", "answers"}` objects for scripts.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
 
-Still to come (see [Possible later steps](#possible-later-steps)): a reusable
-library crate and MCP server mode.
+Still to come (see [Possible later steps](#possible-later-steps)): MCP server
+mode.
 
 ## Draft interface
 
@@ -170,7 +174,6 @@ cat tickets.txt | rone batch --preset triage --json
 
 ## Possible later steps
 
-- Reusable library crate alongside the CLI
 - MCP server mode, so agents can call your presets as tools
 
 ## Related projects
