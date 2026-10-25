@@ -42,6 +42,10 @@ enum Command {
         /// Output machine-readable JSON
         #[arg(long)]
         json: bool,
+
+        /// Only accept answers with at least this much confidence (0..=1)
+        #[arg(long, value_parser = parse_confidence, value_name = "F")]
+        min_confidence: Option<f64>,
     },
 }
 
@@ -144,6 +148,17 @@ fn read_state(text: &Option<String>, file: &Option<PathBuf>) -> Result<String> {
     Ok(state)
 }
 
+/// Parse a confidence threshold between 0 and 1 (clap value parser).
+fn parse_confidence(value: &str) -> Result<f64, String> {
+    let v: f64 = value
+        .parse()
+        .map_err(|_| format!("'{value}' is not a number"))?;
+    if !(0.0..=1.0).contains(&v) {
+        return Err(format!("'{value}' must be between 0 and 1"));
+    }
+    Ok(v)
+}
+
 /// Build the `/v1/systemone` request body.
 fn build_request(model: &str, state: &str, preset: &Preset) -> Value {
     let mut questions = serde_json::Map::new();
@@ -199,6 +214,30 @@ fn extract_answers(response: &Value) -> BTreeMap<String, Value> {
         .unwrap_or_default()
 }
 
+/// The confidence an answer carries: its `confidence` field for `choice`
+/// questions, falling back to `noul` and `prob`.
+fn answer_confidence(answer: &Value) -> Option<f64> {
+    answer
+        .get("confidence")
+        .or_else(|| answer.get("noul"))
+        .or_else(|| answer.get("prob"))
+        .and_then(Value::as_f64)
+}
+
+/// The answers whose confidence is below `min`, or missing (in preset order).
+fn below_threshold(answers: &BTreeMap<String, Value>, min: f64) -> Vec<(String, Option<f64>)> {
+    answers
+        .iter()
+        .filter_map(|(id, answer)| {
+            let conf = answer_confidence(answer);
+            match conf {
+                Some(c) if c >= min => None,
+                _ => Some((id.clone(), conf)),
+            }
+        })
+        .collect()
+}
+
 fn render_answers(answers: &BTreeMap<String, Value>, as_json: bool) -> String {
     if as_json {
         return serde_json::to_string_pretty(answers).unwrap_or_default();
@@ -244,6 +283,7 @@ async fn main() -> Result<()> {
             base_url,
             model,
             json,
+            min_confidence,
         } => {
             let preset = load_preset(&preset)?;
             validate(&preset)?;
@@ -252,6 +292,23 @@ async fn main() -> Result<()> {
             let response = send(&base_url, &request).await?;
             let answers = extract_answers(&response);
             println!("{}", render_answers(&answers, json));
+            if let Some(min) = min_confidence {
+                let failed = below_threshold(&answers, min);
+                for (id, conf) in &failed {
+                    match conf {
+                        Some(c) => eprintln!(
+                            "warning: answer '{id}': confidence {c:.2} is below threshold {min:.2}"
+                        ),
+                        None => eprintln!(
+                            "warning: answer '{id}': no confidence reported, threshold is {min:.2}"
+                        ),
+                    }
+                }
+                if !failed.is_empty() {
+                    // Exit code 3: answers received, but below the confidence threshold.
+                    std::process::exit(3);
+                }
+            }
         }
     }
     Ok(())
@@ -459,5 +516,56 @@ instructions = "A human must handle this."
         let out = render_answers(&answers, true);
         let parsed: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(parsed["a"]["noul"], 0.5);
+    }
+
+    #[test]
+    fn answer_confidence_prefers_confidence_field() {
+        let answer = json!({"choice": "billing", "confidence": 0.95, "noul": 0.1});
+        assert_eq!(answer_confidence(&answer), Some(0.95));
+    }
+
+    #[test]
+    fn answer_confidence_falls_back_to_noul() {
+        let answer = json!({"noul": 0.34});
+        assert_eq!(answer_confidence(&answer), Some(0.34));
+    }
+
+    #[test]
+    fn answer_confidence_falls_back_to_prob() {
+        let answer = json!({"prob": 0.7});
+        assert_eq!(answer_confidence(&answer), Some(0.7));
+    }
+
+    #[test]
+    fn answer_confidence_none_when_absent() {
+        let answer = json!({"type": "choice"});
+        assert_eq!(answer_confidence(&answer), None);
+    }
+
+    #[test]
+    fn below_threshold_flags_low_and_missing_confidence() {
+        let response = json!({
+            "answers": {
+                "high": {"choice": "a", "confidence": 0.95},
+                "low": {"choice": "b", "confidence": 0.5},
+                "noconf": {"type": "choice"}
+            }
+        });
+        let answers = extract_answers(&response);
+        let flagged = below_threshold(&answers, 0.9);
+        let ids: Vec<&str> = flagged.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, vec!["low", "noconf"]);
+    }
+
+    #[test]
+    fn below_threshold_accepts_all_above() {
+        let response = json!({
+            "answers": {
+                "a": {"noul": 0.95},
+                "b": {"prob": 1.0}
+            }
+        });
+        let answers = extract_answers(&response);
+        assert!(below_threshold(&answers, 0.9).is_empty());
     }
 }

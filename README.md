@@ -111,10 +111,13 @@ live endpoint):
 - **Validation**: rejects empty `choice` option lists and criteria entries
   for unknown options, and warns when a single `choice` question has many
   options.
+- **Confidence threshold**: `--min-confidence` accepts answers only when the
+  model is confident enough; below the threshold it warns and exits with
+  code 3, so scripts can act conditionally.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
 
 Still to come (see [Possible later steps](#possible-later-steps)): a reusable
-library crate, confidence threshold mode, batch mode and MCP server mode.
+library crate, batch mode and MCP server mode.
 
 ## Draft interface
 
@@ -147,6 +150,9 @@ cat ticket.txt | rone ask --preset triage --base-url http://localhost:1234/v1
 
 # machine-readable output
 rone ask --preset triage --file ticket.txt --json
+
+# act only when the model is confident enough (exit code 3 otherwise)
+rone ask --preset triage --text "I was billed twice" --min-confidence 0.9
 ```
 
 ## Possible later steps
