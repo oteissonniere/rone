@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Rone: makes System One decision models pleasant to use from the command line.
 #[derive(Parser)]
@@ -60,7 +60,7 @@ struct QuestionDef {
     options: Vec<String>,
 }
 
-#[derive(Deserialize, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 enum QuestionType {
     Choice,
@@ -82,10 +82,15 @@ fn load_preset(name: &str) -> Result<Preset> {
     let path = PathBuf::from("presets").join(format!("{name}.toml"));
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read preset file {}", path.display()))?;
-    let preset: Preset = toml::from_str(&content)
-        .with_context(|| format!("failed to parse preset {}", path.display()))?;
+    let preset =
+        parse_preset(&content).with_context(|| format!("in preset file {}", path.display()))?;
+    Ok(preset)
+}
+
+fn parse_preset(content: &str) -> Result<Preset> {
+    let preset: Preset = toml::from_str(content).context("failed to parse preset TOML")?;
     if preset.questions.is_empty() {
-        bail!("preset '{}' defines no questions", name);
+        bail!("preset defines no questions");
     }
     Ok(preset)
 }
@@ -95,9 +100,7 @@ fn validate(preset: &Preset) -> Result<()> {
     for (id, q) in &preset.questions {
         if q.kind == QuestionType::Choice {
             if q.options.is_empty() {
-                bail!(
-                    "question '{id}': a choice question needs at least one option"
-                );
+                bail!("question '{id}': a choice question needs at least one option");
             }
             if q.options.len() > 10 {
                 eprintln!(
@@ -185,39 +188,38 @@ fn extract_answers(response: &Value) -> BTreeMap<String, Value> {
         .unwrap_or_default()
 }
 
-fn print_answers(answers: &BTreeMap<String, Value>, as_json: bool) {
+fn render_answers(answers: &BTreeMap<String, Value>, as_json: bool) -> String {
     if as_json {
-        println!("{}", serde_json::to_string_pretty(answers).unwrap_or_default());
-        return;
+        return serde_json::to_string_pretty(answers).unwrap_or_default();
     }
+    let mut out = String::new();
     for (id, answer) in answers {
-        println!("{id}:");
+        out.push_str(&format!("{id}:\n"));
         // choice: `probabilities` map + `choice` for the picked option
         if let Some(probs) = answer.get("probabilities").and_then(Value::as_object) {
             let mut entries: Vec<(String, f64)> = probs
                 .iter()
                 .filter_map(|(k, v)| v.as_f64().map(|p| (k.clone(), p)))
                 .collect();
-            entries.sort_by(|a, b| {
-                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-            });
+            entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             let chosen = answer.get("choice").and_then(Value::as_str);
             for (name, prob) in &entries {
-                let marker = if chosen.as_deref() == Some(name.as_str()) {
+                let marker = if chosen == Some(name.as_str()) {
                     "*"
                 } else {
                     " "
                 };
-                println!("  {marker}{name:<24} {:>7.2}%", prob * 100.0);
+                out.push_str(&format!("  {marker}{name:<24} {:>7.2}%\n", prob * 100.0));
             }
         } else if let Some(prob) = answer.get("noul").and_then(Value::as_f64) {
-            println!("  yes: {:>8.2}%", prob * 100.0);
+            out.push_str(&format!("  yes: {:>8.2}%\n", prob * 100.0));
         } else if let Some(prob) = answer.get("prob").and_then(Value::as_f64) {
-            println!("  {:>8.2}%", prob * 100.0);
+            out.push_str(&format!("  {:>8.2}%\n", prob * 100.0));
         } else {
-            println!("  {answer}");
+            out.push_str(&format!("  {answer}\n"));
         }
     }
+    out
 }
 
 #[tokio::main]
@@ -238,8 +240,169 @@ async fn main() -> Result<()> {
             let request = build_request(&model, &state, &preset);
             let response = send(&base_url, &request).await?;
             let answers = extract_answers(&response);
-            print_answers(&answers, json);
+            println!("{}", render_answers(&answers, json));
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn question(kind: QuestionType, options: Vec<&str>) -> QuestionDef {
+        QuestionDef {
+            kind,
+            instructions: "Pick one.".to_string(),
+            options: options.into_iter().map(String::from).collect(),
+        }
+    }
+
+    fn preset_of(questions: Vec<(&str, QuestionDef)>) -> Preset {
+        Preset {
+            questions: questions
+                .into_iter()
+                .map(|(id, q)| (id.to_string(), q))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn parse_preset_parses_questions() {
+        let preset = parse_preset(
+            r#"
+[questions.department]
+type = "choice"
+instructions = "Who should handle this?"
+options = ["billing", "technical", "sales"]
+
+[questions.needs_human]
+type = "noul"
+instructions = "A human must handle this."
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(preset.questions.len(), 2);
+        let dept = &preset.questions["department"];
+        assert_eq!(dept.kind, QuestionType::Choice);
+        assert_eq!(dept.options, vec!["billing", "technical", "sales"]);
+        assert_eq!(preset.questions["needs_human"].kind, QuestionType::Noul);
+    }
+
+    #[test]
+    fn parse_preset_rejects_empty() {
+        assert!(parse_preset("# no questions here").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_empty_choice() {
+        let preset = preset_of(vec![("a", question(QuestionType::Choice, vec![]))]);
+        assert!(validate(&preset).is_err());
+    }
+
+    #[test]
+    fn validate_accepts_choice_with_options() {
+        let preset = preset_of(vec![("a", question(QuestionType::Choice, vec!["x", "y"]))]);
+        assert!(validate(&preset).is_ok());
+    }
+
+    #[test]
+    fn validate_ignores_options_for_noul() {
+        let preset = preset_of(vec![("a", question(QuestionType::Noul, vec![]))]);
+        assert!(validate(&preset).is_ok());
+    }
+
+    #[test]
+    fn build_request_sends_model_state_and_questions() {
+        let preset = preset_of(vec![
+            (
+                "department",
+                question(QuestionType::Choice, vec!["billing", "technical"]),
+            ),
+            ("needs_human", question(QuestionType::Noul, vec![])),
+        ]);
+
+        let req = build_request("laya", "I was billed twice", &preset);
+        assert_eq!(req["model"], "laya");
+        assert_eq!(req["state"], "I was billed twice");
+
+        let dept = &req["questions"]["department"];
+        assert_eq!(dept["type"], "choice");
+        assert_eq!(dept["instructions"], "Pick one.");
+        // criteria is an object: option -> description
+        assert_eq!(dept["criteria"]["billing"], "billing");
+        assert_eq!(dept["criteria"]["technical"], "technical");
+        assert!(req["questions"]["needs_human"].get("criteria").is_none());
+    }
+
+    #[test]
+    fn read_state_prefers_text_and_trims() {
+        assert_eq!(
+            read_state(&Some("  hello ".to_string()), &None).unwrap(),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn read_state_reads_file() {
+        let path = std::env::temp_dir().join(format!("rone-test-{}.txt", std::process::id()));
+        std::fs::write(&path, "from file\n").unwrap();
+        assert_eq!(read_state(&None, &Some(path.clone())).unwrap(), "from file");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_state_rejects_empty_input() {
+        assert!(read_state(&Some("   ".to_string()), &None).is_err());
+    }
+
+    #[test]
+    fn extract_answers_pulls_answers_map() {
+        let response = json!({"answers": {"a": {"type": "noul", "noul": 0.5}}});
+        let answers = extract_answers(&response);
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers["a"]["noul"], 0.5);
+    }
+
+    #[test]
+    fn extract_answers_empty_when_missing() {
+        assert!(extract_answers(&json!({"ok": true})).is_empty());
+    }
+
+    #[test]
+    fn render_answers_marks_chosen_option_sorted_by_probability() {
+        let response = json!({
+            "answers": {
+                "department": {
+                    "type": "choice",
+                    "choice": "billing",
+                    "probabilities": {"billing": 0.97, "technical": 0.02, "sales": 0.01}
+                }
+            }
+        });
+        let answers = extract_answers(&response);
+        let out = render_answers(&answers, false);
+        assert!(out.contains("*billing"));
+        assert!(out.contains("97.00%"));
+        assert!(out.find("billing").unwrap() < out.find("technical").unwrap());
+    }
+
+    #[test]
+    fn render_answers_shows_noul_probability() {
+        let response = json!({"answers": {"needs_human": {"type": "noul", "noul": 0.344}}});
+        let answers = extract_answers(&response);
+        let out = render_answers(&answers, false);
+        assert!(out.contains("yes:"));
+        assert!(out.contains("34.40%"));
+    }
+
+    #[test]
+    fn render_answers_json_mode_is_valid_json() {
+        let response = json!({"answers": {"a": {"type": "noul", "noul": 0.5}}});
+        let answers = extract_answers(&response);
+        let out = render_answers(&answers, true);
+        let parsed: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(parsed["a"]["noul"], 0.5);
+    }
 }
