@@ -10,6 +10,8 @@ use rone::{
     read_states, render_answers, render_batch, validate,
 };
 
+mod mcp;
+
 /// Rone: makes System One decision models pleasant to use from the command line.
 #[derive(Parser)]
 #[command(name = "rone", version, about)]
@@ -84,6 +86,8 @@ enum Command {
         #[arg(long = "var", value_name = "NAME=VALUE")]
         vars: Vec<String>,
     },
+    /// Run rone as an MCP (Model Context Protocol) server over stdio.
+    Mcp,
 }
 
 /// Parse a confidence threshold between 0 and 1 (clap value parser).
@@ -200,6 +204,7 @@ async fn main() -> Result<()> {
                 std::process::exit(3);
             }
         }
+        Command::Mcp => mcp::run().await?,
     }
     Ok(())
 }

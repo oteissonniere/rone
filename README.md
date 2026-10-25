@@ -4,9 +4,9 @@
 [System One](#background) decision models (Clef, Laya, Jev and compatible
 models) pleasant to use from the command line.
 
-> **Status: working skeleton.** A first `rone ask` CLI is implemented and
-> tested against a live `/v1/systemone` endpoint. The interface shown below is
-> still a draft and names/flags may change.
+> **Status: working skeleton.** A `rone ask` CLI and a `rone mcp` server are
+> implemented and tested against a live `/v1/systemone` endpoint. The
+> interface shown below is still a draft and names/flags may change.
 
 ## Why
 
@@ -124,10 +124,9 @@ live endpoint):
 - **Batch mode**: `rone batch` runs the same preset over many inputs (one
   state per line, from `--file` or stdin); `--json` emits an array of
   `{"input", "answers"}` objects for scripts.
+- **MCP server mode**: `rone mcp` serves the presets as MCP tools over stdio
+  (`list_presets`, `ask`, `batch`), so AI agents can call them.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
-
-Still to come (see [Possible later steps](#possible-later-steps)): MCP server
-mode.
 
 ## Draft interface
 
@@ -172,9 +171,26 @@ rone batch --preset triage --file tickets.txt
 cat tickets.txt | rone batch --preset triage --json
 ```
 
-## Possible later steps
+### MCP server
 
-- MCP server mode, so agents can call your presets as tools
+`rone mcp` serves the presets as MCP tools over stdio, for AI agents that
+speak MCP. Tools: `list_presets`, `ask`, `batch`.
+
+Client configuration (Claude Desktop, Cursor, or any MCP client):
+
+```json
+{
+  "mcpServers": {
+    "rone": {
+      "command": "rone",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Presets resolve from the `presets/` directory of the working directory the
+server is started in.
 
 ## Related projects
 

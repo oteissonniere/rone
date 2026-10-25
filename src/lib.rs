@@ -59,6 +59,25 @@ pub fn load_preset(name: &str) -> Result<Preset> {
     Ok(preset)
 }
 
+/// List the names of the presets available in `presets/` (sorted).
+pub fn list_presets() -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    let entries =
+        std::fs::read_dir("presets").with_context(|| "failed to read the presets/ directory")?;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|os| anyhow::anyhow!("preset file name is not valid UTF-8: {os:?}"))?;
+        if let Some(stem) = name.strip_suffix(".toml") {
+            names.push(stem.to_string());
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 /// Parse a preset from TOML content.
 pub fn parse_preset(content: &str) -> Result<Preset> {
     let preset: Preset = toml::from_str(content).context("failed to parse preset TOML")?;
@@ -365,6 +384,12 @@ instructions = "A human must handle this."
     #[test]
     fn parse_preset_rejects_empty() {
         assert!(parse_preset("# no questions here").is_err());
+    }
+
+    #[test]
+    fn list_presets_finds_the_repo_presets() {
+        let names = list_presets().unwrap();
+        assert!(names.contains(&"triage".to_string()));
     }
 
     #[test]
