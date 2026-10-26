@@ -1,6 +1,6 @@
 //! Deterministic mock answers for `/v1/systemone`.
 //!
-//! The `rone-mock` server (`src/bin/mock_server.rs`) serves these in place of
+//! The `mock_server` binary (`src/bin/mock_server.rs`) serves these in place of
 //! a real System One model, so the CLI can be exercised end to end without an
 //! inference server. Generation is a pure function of the input: the same
 //! state and questions always produce the same answers, which keeps tests
