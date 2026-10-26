@@ -11,8 +11,8 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use rone::{
-    below_threshold, build_request, extract_answers, list_presets, load_preset, render_answers,
-    render_batch, validate,
+    below_threshold, build_request, color::ColorMode, extract_answers, list_presets, load_preset,
+    render_answers, render_batch, validate,
 };
 
 /// Protocol versions this server understands, newest first.
@@ -251,7 +251,7 @@ async fn ask_inner(args: &Value) -> Result<ToolOutcome> {
     let response = send(&common.base_url, &request).await?;
     let answers = extract_answers(&response);
 
-    let mut text = render_answers(&answers, common.as_json);
+    let mut text = render_answers(&answers, common.as_json, ColorMode::off());
     let mut below = false;
     if let Some(min) = common.min_confidence {
         let failed = below_threshold(&answers, min);
@@ -319,7 +319,7 @@ async fn batch_inner(args: &Value) -> Result<ToolOutcome> {
         results.push((state.clone(), answers));
     }
 
-    let mut text = render_batch(&results, common.as_json);
+    let mut text = render_batch(&results, common.as_json, ColorMode::off());
     let below = any_below;
     if below {
         text = format!("{warnings}{text}");

@@ -12,6 +12,8 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use color::ColorMode;
+
 pub mod color;
 pub mod config;
 pub mod mock;
@@ -267,14 +269,19 @@ pub fn below_threshold(answers: &BTreeMap<String, Value>, min: f64) -> Vec<(Stri
         .collect()
 }
 
-/// Render one set of answers as a readable table or as JSON.
-pub fn render_answers(answers: &BTreeMap<String, Value>, as_json: bool) -> String {
+/// Render one set of answers as a readable table (optionally colored) or
+/// as JSON.
+pub fn render_answers(
+    answers: &BTreeMap<String, Value>,
+    as_json: bool,
+    colors: ColorMode,
+) -> String {
     if as_json {
         return serde_json::to_string_pretty(answers).unwrap_or_default();
     }
     let mut out = String::new();
     for (id, answer) in answers {
-        out.push_str(&format!("{id}:\n"));
+        out.push_str(&format!("{}:\n", colors.bold(id)));
         // choice: `probabilities` map + `choice` for the picked option
         if let Some(probs) = answer.get("probabilities").and_then(Value::as_object) {
             let mut entries: Vec<(String, f64)> = probs
@@ -284,19 +291,27 @@ pub fn render_answers(answers: &BTreeMap<String, Value>, as_json: bool) -> Strin
             entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             let chosen = answer.get("choice").and_then(Value::as_str);
             for (name, prob) in &entries {
-                let marker = if chosen == Some(name.as_str()) {
-                    "*"
+                let line = format!("{name:<24} {:>7.2}%", prob * 100.0);
+                if chosen == Some(name.as_str()) {
+                    // The picked option stands out in green.
+                    out.push_str(&format!("  {}\n", colors.green(&format!("*{line}"))));
                 } else {
-                    " "
-                };
-                out.push_str(&format!("  {marker}{name:<24} {:>7.2}%\n", prob * 100.0));
+                    out.push_str(&format!("  {line}\n"));
+                }
             }
         } else if let Some(prob) = answer.get("noul").and_then(Value::as_f64) {
-            out.push_str(&format!("  yes: {:>8.2}%\n", prob * 100.0));
+            let value = format!("{:>8.2}%", prob * 100.0);
+            out.push_str(&format!("  yes: {}\n", colors.magnitude(&value, prob)));
         } else if let Some(score) = answer.get("score").and_then(Value::as_u64) {
-            out.push_str(&format!("  score: {score}\n"));
+            // The default scale is 1..5, so normalize against 5.
+            let value = score.to_string();
+            out.push_str(&format!(
+                "  score: {}\n",
+                colors.magnitude(&value, score as f64 / 5.0)
+            ));
         } else if let Some(prob) = answer.get("prob").and_then(Value::as_f64) {
-            out.push_str(&format!("  {:>8.2}%\n", prob * 100.0));
+            let value = format!("{:>8.2}%", prob * 100.0);
+            out.push_str(&format!("  {}\n", colors.magnitude(&value, prob)));
         } else {
             out.push_str(&format!("  {answer}\n"));
         }
@@ -306,7 +321,11 @@ pub fn render_answers(answers: &BTreeMap<String, Value>, as_json: bool) -> Strin
 
 /// Render a batch of (input, answers) pairs: one numbered block per input in
 /// text mode, a JSON array of `{"input", "answers"}` objects in JSON mode.
-pub fn render_batch(results: &[(String, BTreeMap<String, Value>)], as_json: bool) -> String {
+pub fn render_batch(
+    results: &[(String, BTreeMap<String, Value>)],
+    as_json: bool,
+    colors: ColorMode,
+) -> String {
     if as_json {
         let arr: Vec<Value> = results
             .iter()
@@ -319,8 +338,11 @@ pub fn render_batch(results: &[(String, BTreeMap<String, Value>)], as_json: bool
         if i > 0 {
             out.push('\n');
         }
-        out.push_str(&format!("#{}: {input}\n", i + 1));
-        out.push_str(&render_answers(answers, false));
+        out.push_str(&format!(
+            "{}\n",
+            colors.bold(&format!("#{}: {input}", i + 1))
+        ));
+        out.push_str(&render_answers(answers, false, colors));
     }
     out
 }
@@ -511,7 +533,7 @@ instructions = "A human must handle this."
             }
         });
         let answers = extract_answers(&response);
-        let out = render_answers(&answers, false);
+        let out = render_answers(&answers, false, ColorMode::off());
         assert!(out.contains("*billing"));
         assert!(out.contains("97.00%"));
         assert!(out.find("billing").unwrap() < out.find("technical").unwrap());
@@ -521,7 +543,7 @@ instructions = "A human must handle this."
     fn render_answers_shows_noul_probability() {
         let response = json!({"answers": {"needs_human": {"type": "noul", "noul": 0.344}}});
         let answers = extract_answers(&response);
-        let out = render_answers(&answers, false);
+        let out = render_answers(&answers, false, ColorMode::off());
         assert!(out.contains("yes:"));
         assert!(out.contains("34.40%"));
     }
@@ -530,7 +552,7 @@ instructions = "A human must handle this."
     fn render_answers_shows_score_value() {
         let response = json!({"answers": {"severity": {"type": "score", "score": 4}}});
         let answers = extract_answers(&response);
-        let out = render_answers(&answers, false);
+        let out = render_answers(&answers, false, ColorMode::off());
         assert!(out.contains("severity:"));
         assert!(out.contains("score: 4"));
         // No raw JSON fallback.
@@ -538,10 +560,43 @@ instructions = "A human must handle this."
     }
 
     #[test]
+    fn render_answers_colored_mode_paints_ansi() {
+        let response = json!({
+            "answers": {
+                "department": {
+                    "type": "choice",
+                    "choice": "billing",
+                    "probabilities": {"billing": 0.97, "technical": 0.03}
+                },
+                "needs_human": {"type": "noul", "noul": 0.344},
+                "severity": {"type": "score", "score": 4}
+            }
+        });
+        let answers = extract_answers(&response);
+        let out = render_answers(&answers, false, ColorMode::on());
+        // The question id is bold.
+        assert!(out.contains("[1mdepartment"));
+        // The chosen option is green.
+        assert!(out.contains("[32m*billing"));
+        // A low noul (< 0.5) is green.
+        assert!(out.contains("[32m   34.40%"));
+        // A score of 4 out of 5 (0.8) is red.
+        assert!(out.contains("[31m4"));
+    }
+
+    #[test]
+    fn render_answers_off_mode_has_no_ansi_escapes() {
+        let response = json!({"answers": {"a": {"type": "noul", "noul": 0.5}}});
+        let answers = extract_answers(&response);
+        let out = render_answers(&answers, false, ColorMode::off());
+        assert!(!out.contains('\u{1b}'));
+    }
+
+    #[test]
     fn render_answers_json_mode_is_valid_json() {
         let response = json!({"answers": {"a": {"type": "noul", "noul": 0.5}}});
         let answers = extract_answers(&response);
-        let out = render_answers(&answers, true);
+        let out = render_answers(&answers, true, ColorMode::off());
         let parsed: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(parsed["a"]["noul"], 0.5);
     }
@@ -685,7 +740,7 @@ instructions = "A human must handle this."
             }
         }));
         let results = vec![("I was billed twice".to_string(), answers)];
-        let out = render_batch(&results, false);
+        let out = render_batch(&results, false, ColorMode::off());
         assert!(out.starts_with("#1: I was billed twice\n"));
         assert!(out.contains("*billing"));
         assert!(out.contains("97.00%"));
@@ -699,7 +754,7 @@ instructions = "A human must handle this."
             ("first".to_string(), answers.clone()),
             ("second".to_string(), answers),
         ];
-        let out = render_batch(&results, true);
+        let out = render_batch(&results, true, ColorMode::off());
         let parsed: Value = serde_json::from_str(&out).unwrap();
         let arr = parsed.as_array().unwrap();
         assert_eq!(arr.len(), 2);

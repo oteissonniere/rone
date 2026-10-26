@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -6,6 +7,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use serde_json::Value;
 
+use rone::color::ColorMode;
 use rone::config::{Config, Profile, load_config, resolve_api_key};
 use rone::{
     below_threshold, build_request, extract_answers, load_preset, parse_vars, read_state,
@@ -245,7 +247,8 @@ async fn main() -> Result<()> {
             )
             .await?;
             let answers = extract_answers(&response);
-            println!("{}", render_answers(&answers, json));
+            let colors = ColorMode::new(std::io::stdout().is_terminal());
+            println!("{}", render_answers(&answers, json, colors));
             if let Some(min) = target.min_confidence {
                 let failed = below_threshold(&answers, min);
                 for (id, conf) in &failed {
@@ -318,7 +321,8 @@ async fn main() -> Result<()> {
                 }
                 results.push((state.clone(), answers));
             }
-            println!("{}", render_batch(&results, json));
+            let colors = ColorMode::new(std::io::stdout().is_terminal());
+            println!("{}", render_batch(&results, json, colors));
             if any_below {
                 // Exit code 3: answers received, but at least one is below the
                 // confidence threshold.
