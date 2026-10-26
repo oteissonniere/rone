@@ -119,7 +119,8 @@ live endpoint):
   library.
 - **Presets**: reusable question sets loaded from `presets/<name>.toml`
   (see `presets/triage.toml`, `presets/severity.toml`,
-  `presets/escalation.toml` and `presets/intent.toml`);
+  `presets/escalation.toml`, `presets/intent.toml` and
+  `presets/sentiment.toml`);
   `rone list-presets` shows the presets of the current `presets/` directory.
 - **Option descriptions**: an optional `criteria` table in a preset
   describes each `choice` option; without one, the option name is its own

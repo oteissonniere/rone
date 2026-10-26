@@ -1,0 +1,12 @@
+# Sentiment analysis: how does the customer feel?
+# The `choice` question classifies the overall tone in three classes.
+
+[questions.sentiment]
+type = "choice"
+instructions = "What is the customer's overall sentiment?"
+options = ["positive", "neutral", "negative"]
+
+[questions.sentiment.criteria]
+positive = "satisfaction, gratitude, praise"
+neutral = "informational or factual, no clear emotion"
+negative = "dissatisfaction, frustration, anger, complaint"
