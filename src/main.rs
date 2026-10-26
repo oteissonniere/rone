@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -10,8 +10,8 @@ use serde_json::Value;
 use rone::color::ColorMode;
 use rone::config::{Config, Profile, load_config, render_profiles, resolve_api_key};
 use rone::{
-    below_threshold, build_request, extract_answers, load_preset, parse_vars, read_state,
-    read_states, render_answers, render_batch, validate,
+    below_threshold, build_request, extract_answers, list_presets, load_preset, parse_vars,
+    read_state, read_states, render_answers, render_batch, render_presets, validate,
 };
 
 mod mcp;
@@ -123,6 +123,8 @@ enum Command {
         #[arg(long = "var", value_name = "NAME=VALUE")]
         vars: Vec<String>,
     },
+    /// List the presets available in the presets/ directory.
+    ListPresets,
     /// List the profiles defined in the config file.
     ListProfiles,
     /// Run rone as an MCP (Model Context Protocol) server over stdio.
@@ -337,6 +339,18 @@ async fn main() -> Result<()> {
                 // Exit code 3: answers received, but at least one is below the
                 // confidence threshold.
                 std::process::exit(3);
+            }
+        }
+        Command::ListPresets => {
+            if !Path::new("presets").is_dir() {
+                eprintln!("no presets/ directory found in the current directory");
+            } else {
+                let names = list_presets()?;
+                if names.is_empty() {
+                    eprintln!("no presets found in presets/");
+                } else {
+                    println!("{}", render_presets(&names, colors));
+                }
             }
         }
         Command::ListProfiles => match &config {

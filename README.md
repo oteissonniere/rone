@@ -104,7 +104,8 @@ live endpoint):
   `rone` crate; the binary is a thin CLI on top of it, with no HTTP in the
   library.
 - **Presets**: reusable question sets loaded from `presets/<name>.toml`
-  (see `presets/triage.toml` and `presets/severity.toml`).
+  (see `presets/triage.toml` and `presets/severity.toml`);
+  `rone list-presets` shows the presets of the current `presets/` directory.
 - **Option descriptions**: an optional `criteria` table in a preset
   describes each `choice` option; without one, the option name is its own
   description.
@@ -167,6 +168,9 @@ instructions = "A human must handle this."
 ```bash
 # one-off question
 rone ask --preset triage --text "I was billed twice, please refund"
+
+# list the presets available in presets/
+rone list-presets
 
 # from a file or stdin, against a specific endpoint
 cat ticket.txt | rone ask --preset triage --base-url http://localhost:1234/v1

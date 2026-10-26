@@ -84,6 +84,16 @@ pub fn list_presets() -> Result<Vec<String>> {
     Ok(names)
 }
 
+/// Render a list of preset names as a human-friendly listing, with a header
+/// hinting at the `--preset` flag.
+pub fn render_presets(names: &[String], colors: ColorMode) -> String {
+    let mut out = String::from("Presets in presets/ (use --preset <name>):\n");
+    for name in names {
+        out.push_str(&format!("  {}\n", colors.bold(name)));
+    }
+    out
+}
+
 /// Parse a preset from TOML content.
 pub fn parse_preset(content: &str) -> Result<Preset> {
     let preset: Preset = toml::from_str(content).context("failed to parse preset TOML")?;
@@ -418,6 +428,29 @@ instructions = "A human must handle this."
     fn list_presets_finds_the_repo_presets() {
         let names = list_presets().unwrap();
         assert!(names.contains(&"triage".to_string()));
+    }
+
+    #[test]
+    fn render_presets_lists_names_under_a_header() {
+        let names = vec!["triage".to_string(), "severity".to_string()];
+        let out = render_presets(&names, ColorMode::off());
+        assert_eq!(
+            out,
+            "Presets in presets/ (use --preset <name>):\n  triage\n  severity\n"
+        );
+    }
+
+    #[test]
+    fn render_presets_empty_list_is_header_only() {
+        let out = render_presets(&[], ColorMode::off());
+        assert_eq!(out, "Presets in presets/ (use --preset <name>):\n");
+    }
+
+    #[test]
+    fn render_presets_colored_mode_paints_ansi() {
+        let names = vec!["triage".to_string()];
+        assert!(render_presets(&names, ColorMode::on()).contains('\u{1b}'));
+        assert!(!render_presets(&names, ColorMode::off()).contains('\u{1b}'));
     }
 
     #[test]
