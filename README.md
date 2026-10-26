@@ -5,8 +5,9 @@
 models) pleasant to use from the command line.
 
 > **Status: working skeleton.** A `rone ask` CLI and a `rone mcp` server are
-> implemented and tested against a live `/v1/systemone` endpoint. The
-> interface shown below is still a draft and names/flags may change.
+> implemented and tested against a live `/v1/systemone` endpoint, plus a
+> deterministic mock server for offline testing. The interface shown below
+> is still a draft and names/flags may change.
 
 ## Why
 
@@ -103,7 +104,7 @@ live endpoint):
   `rone` crate; the binary is a thin CLI on top of it, with no HTTP in the
   library.
 - **Presets**: reusable question sets loaded from `presets/<name>.toml`
-  (see `presets/triage.toml`).
+  (see `presets/triage.toml` and `presets/severity.toml`).
 - **Option descriptions**: an optional `criteria` table in a preset
   describes each `choice` option; without one, the option name is its own
   description.
@@ -130,6 +131,11 @@ live endpoint):
   override the profile.
 - **MCP server mode**: `rone mcp` serves the presets as MCP tools over stdio
   (`list_presets`, `ask`, `batch`), so AI agents can call them.
+- **Mock server** (`src/bin/mock_server.rs`): a local
+  `/v1/systemone`-compatible endpoint with deterministic answers (a pure
+  function of the input), so the CLI can be exercised end to end without an
+  inference server; the integration tests in `tests/` run against it.
+- **Examples**: sample tickets in `examples/tickets.txt` for batch mode.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
 
 ## Draft interface
@@ -171,8 +177,8 @@ rone ask --preset triage --text "I was billed twice" --min-confidence 0.9
 rone ask --preset triage --text "I was billed twice" --var team=support --var lang=fr
 
 # many inputs at once: one state per line, from a file or stdin
-rone batch --preset triage --file tickets.txt
-cat tickets.txt | rone batch --preset triage --json
+rone batch --preset triage --file examples/tickets.txt
+cat examples/tickets.txt | rone batch --preset triage --json
 ```
 
 ### Configuration file
@@ -249,6 +255,35 @@ Client configuration (Claude Desktop, Cursor, or any MCP client):
 
 Presets resolve from the `presets/` directory of the working directory the
 server is started in.
+
+### Mock server
+
+A small `/v1/systemone`-compatible server (`src/bin/mock_server.rs`) answers
+with deterministic, pseudo-random values generated from the input (FNV-1a),
+so the full CLI path — request, network, rendering, exit codes — can be
+exercised without an inference server:
+
+```bash
+cargo run --bin mock_server              # http://127.0.0.1:8123
+RONE_MOCK_PORT=9000 cargo run --bin mock_server   # another port
+```
+
+Then point the CLI at it:
+
+```bash
+rone ask --preset triage --text "I was billed twice" \
+    --base-url http://127.0.0.1:8123/v1 --model mock
+
+rone batch --preset triage --file examples/tickets.txt \
+    --base-url http://127.0.0.1:8123/v1 --model mock
+```
+
+Answers are a pure function of the input: the same state and questions always
+produce the same answers. `choice` answers carry a confidence between 0.85
+and 0.99, `noul` answers a probability between 0.10 and 0.899, and `score`
+answers a score on the default 1..5 scale — so both sides of a
+`--min-confidence` threshold are reachable. The integration tests in
+`tests/mock_integration.rs` pin the exact values.
 
 ## Related projects
 
