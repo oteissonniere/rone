@@ -12,6 +12,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub mod color;
 pub mod config;
 pub mod mock;
 
