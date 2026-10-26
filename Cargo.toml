@@ -2,6 +2,7 @@
 name = "rone"
 version = "0.1.0"
 edition = "2024"
+default-run = "rone"
 license = "MIT"
 description = "A small Rust CLI that makes System One decision models pleasant to use from the command line."
 
