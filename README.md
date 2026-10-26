@@ -158,6 +158,13 @@ live endpoint):
 - **Examples**: sample tickets in `examples/tickets.txt` for batch mode.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
 
+## Roadmap
+
+- Set up the GitHub repository and publish on crates.io
+- More presets for common use cases (sentiment, compliance, ...)
+- Packaging (install script, Homebrew tap)
+- First-class example of a multi-question preset with `--var` variables
+
 ## Draft interface
 
 Illustrative only; names and flags may change.
