@@ -20,6 +20,20 @@ talking to a chat LLM.
 Rone sits between you and the model. It should take care of the JSON so you
 only have to provide what actually changes: the input and a few parameters.
 
+## Installation
+
+Rone is a single binary built with Rust. From a checkout of this repo:
+
+```bash
+cargo install --path .     # installs rone (and mock_server) into ~/.cargo/bin
+```
+
+or build it in place:
+
+```bash
+cargo build --release      # binary in target/release/rone
+```
+
 ## Background
 
 System One models answer constrained questions in a single forward pass, with
