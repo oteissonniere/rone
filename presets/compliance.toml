@@ -1,0 +1,6 @@
+# Compliance guardrail: does this input contain a legal/compliance issue?
+# The `noul` question flags inputs that need a compliance review.
+
+[questions.needs_compliance_review]
+type = "noul"
+instructions = "This input contains a potential legal or compliance issue (fraud, data breach, discrimination, financial violation, regulatory breach)."
