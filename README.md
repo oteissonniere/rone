@@ -112,7 +112,9 @@ live endpoint):
 - **Request building**: sends a `/v1/systemone` request with `criteria` as an
   object (option → description), as the endpoint expects.
 - **Readable output**: a probability table (`*` marks the chosen option) and a
-  `--json` mode for scripts.
+  `--json` mode for scripts. Text output is colored on a terminal (bold ids,
+  green/yellow/red magnitudes); piping disables colors, `--no-color` forces
+  them off, and the `NO_COLOR` environment variable is honored.
 - **Validation**: rejects empty `choice` option lists and criteria entries
   for unknown options, and warns when a single `choice` question has many
   options.
@@ -169,6 +171,9 @@ cat ticket.txt | rone ask --preset triage --base-url http://localhost:1234/v1
 
 # machine-readable output
 rone ask --preset triage --file ticket.txt --json
+
+# plain output, no colors even on a terminal
+rone ask --preset triage --text "I was billed twice" --no-color
 
 # act only when the model is confident enough (exit code 3 otherwise)
 rone ask --preset triage --text "I was billed twice" --min-confidence 0.9

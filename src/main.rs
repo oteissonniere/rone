@@ -24,6 +24,11 @@ struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
 
+    /// Disable colored output (colors are on by default on a terminal; the
+    /// NO_COLOR environment variable is also honored)
+    #[arg(long, global = true)]
+    no_color: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -211,6 +216,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config_path = cli.config;
     let config = load_config(config_path.as_deref())?;
+    // Colors are on by default on a terminal; off when stdout is piped, when
+    // NO_COLOR is set, or when --no-color is given.
+    let colors = ColorMode::new(
+        !cli.no_color && std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+    );
     match cli.command {
         Command::Ask {
             preset,
@@ -247,7 +257,6 @@ async fn main() -> Result<()> {
             )
             .await?;
             let answers = extract_answers(&response);
-            let colors = ColorMode::new(std::io::stdout().is_terminal());
             println!("{}", render_answers(&answers, json, colors));
             if let Some(min) = target.min_confidence {
                 let failed = below_threshold(&answers, min);
@@ -321,7 +330,6 @@ async fn main() -> Result<()> {
                 }
                 results.push((state.clone(), answers));
             }
-            let colors = ColorMode::new(std::io::stdout().is_terminal());
             println!("{}", render_batch(&results, json, colors));
             if any_below {
                 // Exit code 3: answers received, but at least one is below the
