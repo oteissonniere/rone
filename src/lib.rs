@@ -292,6 +292,8 @@ pub fn render_answers(answers: &BTreeMap<String, Value>, as_json: bool) -> Strin
             }
         } else if let Some(prob) = answer.get("noul").and_then(Value::as_f64) {
             out.push_str(&format!("  yes: {:>8.2}%\n", prob * 100.0));
+        } else if let Some(score) = answer.get("score").and_then(Value::as_u64) {
+            out.push_str(&format!("  score: {score}\n"));
         } else if let Some(prob) = answer.get("prob").and_then(Value::as_f64) {
             out.push_str(&format!("  {:>8.2}%\n", prob * 100.0));
         } else {
@@ -521,6 +523,17 @@ instructions = "A human must handle this."
         let out = render_answers(&answers, false);
         assert!(out.contains("yes:"));
         assert!(out.contains("34.40%"));
+    }
+
+    #[test]
+    fn render_answers_shows_score_value() {
+        let response = json!({"answers": {"severity": {"type": "score", "score": 4}}});
+        let answers = extract_answers(&response);
+        let out = render_answers(&answers, false);
+        assert!(out.contains("severity:"));
+        assert!(out.contains("score: 4"));
+        // No raw JSON fallback.
+        assert!(!out.contains('{'));
     }
 
     #[test]
