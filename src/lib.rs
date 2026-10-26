@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub mod config;
+pub mod mock;
 
 /// A preset file: `presets/<name>.toml`.
 #[derive(Deserialize)]
