@@ -344,7 +344,25 @@ request and the result easy for humans to work with.
 
 ## Contributing
 
-Ideas, issues and pull requests are welcome once the project skeleton is in place.
+Ideas, issues and pull requests are welcome.
+
+Development loop — the same checks CI runs on every push and pull request:
+
+```bash
+cargo fmt && cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+A few conventions:
+
+- **Presets** live in `presets/<name>.toml`, one file per use case;
+  `rone list-presets` picks them up from the working directory.
+- **Profiles** belong in a local `rone.toml` (gitignored);
+  `config.example.toml` is the annotated reference for the format.
+- **Integration tests** in `tests/` run against the bundled mock server
+  (`src/bin/mock_server.rs`), so no inference server is needed to verify a
+  change.
 
 ## License
 
