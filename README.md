@@ -130,8 +130,8 @@ live endpoint):
   `{"input", "answers"}` objects for scripts.
 - **Profiles**: a config file (`rone.toml`) defines named server/model
   profiles (`base_url`, `model`, `min_confidence`, `api_key`, `timeout`);
-  pick one with `--profile` or set a `default_profile`. Command-line flags
-  override the profile. `rone list-profiles` shows the profiles of the loaded
+  pick one with `--profile` (or the `RONE_PROFILE` environment variable) or
+  set a `default_profile`. Command-line flags override the profile. `rone list-profiles` shows the profiles of the loaded
   config file (the default is marked with `*`; literal `api_key` values are
   hidden, `env:VAR` references are shown).
 - **MCP server mode**: `rone mcp` serves the presets as MCP tools over stdio
@@ -224,9 +224,10 @@ api_key = "env:RONE_API_KEY"
 timeout = 30
 ```
 
-Pick a profile with `--profile`; without it, `default_profile` is used (and
-without that, the built-in defaults). Explicit flags always win over the
-profile:
+Pick a profile with `--profile`, or set the `RONE_PROFILE` environment
+variable; without either, `default_profile` is used (and without that, the
+built-in defaults). An explicit `--profile` flag wins over the environment
+variable, and explicit flags always win over the profile:
 
 ```bash
 # use the "production" profile

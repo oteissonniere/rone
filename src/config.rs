@@ -125,6 +125,12 @@ pub fn resolve_api_key(raw: &str) -> Result<String> {
     }
 }
 
+/// The profile named by the `RONE_PROFILE` environment variable, if set
+/// and non-empty. Used as a fallback when `--profile` is not given.
+pub fn profile_from_env() -> Option<String> {
+    std::env::var("RONE_PROFILE").ok().filter(|s| !s.is_empty())
+}
+
 /// Displayable form of an api_key: `env:VAR` references are shown as-is,
 /// literal values are hidden (shown as `set`) so listing profiles never
 /// leaks a secret.
@@ -213,6 +219,10 @@ pub fn load_config(explicit: Option<&Path>) -> Result<Option<Config>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The environment is process-wide: tests that read or write it must be
+    /// serialized, not run on parallel threads.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn parse_reads_profiles_and_default() {
@@ -425,6 +435,24 @@ api_key = "sk-literal"
         .join("\n")
             + "\n";
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn profile_from_env_reads_rone_profile() {
+        let _env = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("RONE_PROFILE", "mini-ai") };
+        assert_eq!(profile_from_env().as_deref(), Some("mini-ai"));
+        unsafe { std::env::remove_var("RONE_PROFILE") };
+    }
+
+    #[test]
+    fn profile_from_env_unset_or_empty_is_none() {
+        let _env = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::remove_var("RONE_PROFILE") };
+        assert_eq!(profile_from_env(), None);
+        unsafe { std::env::set_var("RONE_PROFILE", "") };
+        assert_eq!(profile_from_env(), None);
+        unsafe { std::env::remove_var("RONE_PROFILE") };
     }
 
     #[test]

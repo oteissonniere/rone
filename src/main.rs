@@ -8,7 +8,9 @@ use clap::{Parser, Subcommand};
 use serde_json::Value;
 
 use rone::color::ColorMode;
-use rone::config::{Config, Profile, load_config, render_profiles, resolve_api_key};
+use rone::config::{
+    Config, Profile, load_config, profile_from_env, render_profiles, resolve_api_key,
+};
 use rone::{
     below_threshold, build_request, extract_answers, list_presets, load_preset, parse_vars,
     read_state, read_states, render_answers, render_batch, render_presets, validate,
@@ -239,6 +241,9 @@ async fn main() -> Result<()> {
             timeout,
             vars,
         } => {
+            // The RONE_PROFILE environment variable is a fallback for
+            // --profile: an explicit flag always wins.
+            let profile = profile.or_else(profile_from_env);
             let target = resolve_target(
                 config.as_ref(),
                 profile.as_deref(),
@@ -292,6 +297,9 @@ async fn main() -> Result<()> {
             timeout,
             vars,
         } => {
+            // The RONE_PROFILE environment variable is a fallback for
+            // --profile: an explicit flag always wins.
+            let profile = profile.or_else(profile_from_env);
             let target = resolve_target(
                 config.as_ref(),
                 profile.as_deref(),
