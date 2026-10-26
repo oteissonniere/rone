@@ -1,0 +1,10 @@
+# Severity triage: rate the input, then decide on human handling.
+# The `score` question exercises the score answer type (1..5 scale).
+
+[questions.severity]
+type = "score"
+instructions = "Rate the severity of this input from 1 (minor) to 5 (critical)."
+
+[questions.needs_human]
+type = "noul"
+instructions = "A human must handle this."
