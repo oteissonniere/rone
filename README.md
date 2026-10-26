@@ -130,7 +130,9 @@ live endpoint):
 - **Profiles**: a config file (`rone.toml`) defines named server/model
   profiles (`base_url`, `model`, `min_confidence`, `api_key`, `timeout`);
   pick one with `--profile` or set a `default_profile`. Command-line flags
-  override the profile.
+  override the profile. `rone list-profiles` shows the profiles of the loaded
+  config file (the default is marked with `*`; literal `api_key` values are
+  hidden, `env:VAR` references are shown).
 - **MCP server mode**: `rone mcp` serves the presets as MCP tools over stdio
   (`list_presets`, `ask`, `batch`), so AI agents can call them.
 - **Mock server** (`src/bin/mock_server.rs`): a local
@@ -231,6 +233,9 @@ rone ask --preset triage --profile local --model laya-2 --text "..."
 
 # point at a specific config file
 rone ask --preset triage --config ./ci.rone.toml --profile production --text "..."
+
+# list the profiles of the loaded config file
+rone list-profiles
 ```
 
 `api_key` accepts a literal token or an `env:VAR` reference, resolved from

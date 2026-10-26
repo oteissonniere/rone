@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::color::ColorMode;
+
 /// Built-in default base URL, used when neither a profile nor a flag sets it.
 pub const DEFAULT_BASE_URL: &str = "http://localhost:1234/v1";
 /// Built-in default model name.
@@ -121,6 +123,46 @@ pub fn resolve_api_key(raw: &str) -> Result<String> {
         }
         None => Ok(raw.to_string()),
     }
+}
+
+/// Displayable form of an api_key: `env:VAR` references are shown as-is,
+/// literal values are hidden (shown as `set`) so listing profiles never
+/// leaks a secret.
+fn api_key_display(api_key: &Option<String>) -> Option<&str> {
+    match api_key {
+        Some(k) if k.starts_with("env:") => Some(k.as_str()),
+        Some(_) => Some("set"),
+        None => None,
+    }
+}
+
+/// Render the profiles of a config as a human-friendly listing. The
+/// default profile is marked with `*`; optional fields are only shown when
+/// set.
+pub fn render_profiles(config: &Config, colors: ColorMode) -> String {
+    let mut out = String::new();
+    for (name, profile) in &config.profiles {
+        let is_default = config.default_profile.as_deref() == Some(name.as_str());
+        let name = if is_default {
+            colors.green(name)
+        } else {
+            colors.bold(name)
+        };
+        let marker = if is_default { "*" } else { " " };
+        out.push_str(&format!("{marker} {name}\n"));
+        out.push_str(&format!("    base_url        {}\n", profile.base_url));
+        out.push_str(&format!("    model           {}\n", profile.model));
+        if let Some(min) = profile.min_confidence {
+            out.push_str(&format!("    min_confidence  {min}\n"));
+        }
+        if let Some(key) = api_key_display(&profile.api_key) {
+            out.push_str(&format!("    api_key         {key}\n"));
+        }
+        if let Some(t) = profile.timeout {
+            out.push_str(&format!("    timeout         {t}s\n"));
+        }
+    }
+    out
 }
 
 /// Candidate config file locations, in order of precedence.
@@ -348,5 +390,52 @@ timeout = 30
         let err = resolve_api_key("env:RONE_TEST_EMPTY_KEY").unwrap_err();
         assert!(err.to_string().contains("empty"));
         unsafe { std::env::remove_var("RONE_TEST_EMPTY_KEY") };
+    }
+
+    #[test]
+    fn render_profiles_lists_fields_and_default_marker() {
+        let cfg = Config::parse(
+            r#"default_profile = "a"
+
+[profiles.a]
+model = "m-a"
+min_confidence = 0.8
+api_key = "env:RONE_API_KEY"
+timeout = 30
+
+[profiles.b]
+base_url = "https://api.example.com/v1"
+api_key = "sk-literal"
+"#,
+        )
+        .unwrap();
+        let out = render_profiles(&cfg, ColorMode::off());
+        let expected = [
+            "* a",
+            "    base_url        http://localhost:1234/v1",
+            "    model           m-a",
+            "    min_confidence  0.8",
+            "    api_key         env:RONE_API_KEY",
+            "    timeout         30s",
+            "  b",
+            "    base_url        https://api.example.com/v1",
+            "    model           laya",
+            "    api_key         set",
+        ]
+        .join("\n")
+            + "\n";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn render_profiles_off_mode_has_no_ansi() {
+        let cfg = Config::parse("[profiles.a]").unwrap();
+        assert!(!render_profiles(&cfg, ColorMode::off()).contains('\u{1b}'));
+    }
+
+    #[test]
+    fn render_profiles_colored_mode_paints_ansi() {
+        let cfg = Config::parse("default_profile = \"a\"\n[profiles.a]").unwrap();
+        assert!(render_profiles(&cfg, ColorMode::on()).contains('\u{1b}'));
     }
 }

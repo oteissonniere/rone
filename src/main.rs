@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use serde_json::Value;
 
 use rone::color::ColorMode;
-use rone::config::{Config, Profile, load_config, resolve_api_key};
+use rone::config::{Config, Profile, load_config, render_profiles, resolve_api_key};
 use rone::{
     below_threshold, build_request, extract_answers, load_preset, parse_vars, read_state,
     read_states, render_answers, render_batch, validate,
@@ -123,6 +123,8 @@ enum Command {
         #[arg(long = "var", value_name = "NAME=VALUE")]
         vars: Vec<String>,
     },
+    /// List the profiles defined in the config file.
+    ListProfiles,
     /// Run rone as an MCP (Model Context Protocol) server over stdio.
     Mcp,
 }
@@ -337,6 +339,15 @@ async fn main() -> Result<()> {
                 std::process::exit(3);
             }
         }
+        Command::ListProfiles => match &config {
+            Some(cfg) if !cfg.profiles.is_empty() => {
+                println!("{}", render_profiles(cfg, colors));
+            }
+            Some(_) => eprintln!("no profiles defined in the config file"),
+            None => eprintln!(
+                "no config file found (looked for rone.toml and ~/.config/rone/rone.toml)"
+            ),
+        },
         Command::Mcp => mcp::run().await?,
     }
     Ok(())
