@@ -159,6 +159,36 @@ fn ask_json_matches_the_pinned_mock_values() {
 }
 
 #[test]
+fn severity_preset_renders_score_and_noul() {
+    let (url, server) = start_mock_server();
+    let config = empty_config();
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "ask",
+        "--preset",
+        "severity",
+        "--text",
+        STATE,
+        "--base-url",
+        &url,
+        "--model",
+        "mock",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    // The score answer renders as a plain value, not raw JSON.
+    assert!(stdout.contains("severity:"), "stdout: {stdout}");
+    assert!(stdout.contains("score: 5"), "stdout: {stdout}");
+    assert!(!stdout.contains("{\"type\":\"score\""), "stdout: {stdout}");
+    // The same `needs_human` question as the triage preset.
+    assert!(stdout.contains("needs_human:"), "stdout: {stdout}");
+    assert!(stdout.contains("76.10%"), "stdout: {stdout}");
+    drop(server);
+}
+
+#[test]
 fn ask_below_threshold_exits_3_with_a_warning() {
     let (url, server) = start_mock_server();
     let config = empty_config();
