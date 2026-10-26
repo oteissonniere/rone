@@ -1,0 +1,6 @@
+# Escalation guardrail: does this input need a human?
+# The `noul` question exercises the yes/no answer type.
+
+[questions.needs_human]
+type = "noul"
+instructions = "A human must handle this input."

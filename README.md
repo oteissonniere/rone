@@ -104,8 +104,9 @@ live endpoint):
   `rone` crate; the binary is a thin CLI on top of it, with no HTTP in the
   library.
 - **Presets**: reusable question sets loaded from `presets/<name>.toml`
-  (see `presets/triage.toml` and `presets/severity.toml`);
-  `rone list-presets` shows the presets of the current `presets/` directory.
+  (see `presets/triage.toml`, `presets/severity.toml` and
+  `presets/escalation.toml`); `rone list-presets` shows the presets of the
+  current `presets/` directory.
 - **Option descriptions**: an optional `criteria` table in a preset
   describes each `choice` option; without one, the option name is its own
   description.
