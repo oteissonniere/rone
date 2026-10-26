@@ -1,0 +1,14 @@
+# Intent classification: what does the customer want?
+# The `choice` question with a criteria table exercises option descriptions.
+
+[questions.intent]
+type = "choice"
+instructions = "What is the customer's main intent?"
+options = ["refund", "technical_support", "account", "plan_change", "other"]
+
+[questions.intent.criteria]
+refund = "getting money back or a credit"
+technical_support = "fixing a technical problem"
+account = "changing account details"
+plan_change = "upgrading, downgrading or cancelling a plan"
+other = "anything else"
