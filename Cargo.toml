@@ -5,6 +5,9 @@ edition = "2024"
 default-run = "rone"
 license = "MIT"
 description = "A small Rust CLI that makes System One decision models pleasant to use from the command line."
+readme = "README.md"
+keywords = ["cli", "systemone", "decision-model", "inference"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
