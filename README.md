@@ -109,6 +109,8 @@ live endpoint):
 - **Helpful validation**: catch common mistakes before sending (empty option
   lists, too many options in one `choice` question, low confidence), with clear
   messages instead of raw server errors.
+- **Offline debugging**: `--dry-run` prints the exact request that would be
+  sent, without any network call.
 
 ## Progress
 
@@ -143,6 +145,9 @@ live endpoint):
 - **Variables**: `--var NAME=VALUE` (repeatable) injects values into question
   instructions via `{{name}}` placeholders; an unknown placeholder is a
   clear error before anything is sent.
+- **Dry run**: `--dry-run` prints the endpoint URL and the exact request
+  body (after preset, variable and profile resolution) without sending
+  it; in comparison mode one block is printed per profile.
 - **Batch mode**: `rone batch` runs the same preset over many inputs (one
   state per line, from `--file` or stdin); `--json` emits an array of
   `{"input", "answers"}` objects for scripts.
@@ -217,6 +222,9 @@ rone ask --preset triage --text "I was billed twice" --profile local,production
 
 # inject variables into question instructions ({{name}} placeholders in the preset)
 rone ask --preset triage --text "I was billed twice" --var team=support --var lang=fr
+
+# show the exact request that would be sent, without sending it
+rone ask --preset triage --text "I was billed twice" --dry-run
 
 # many inputs at once: one state per line, from a file or stdin
 rone batch --preset triage --file examples/tickets.txt
