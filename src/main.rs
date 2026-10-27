@@ -70,6 +70,10 @@ enum Command {
         #[arg(long)]
         json: bool,
 
+        /// Print the exact request that would be sent, without sending it
+        #[arg(long)]
+        dry_run: bool,
+
         /// Only accept answers with at least this much confidence (0..=1)
         #[arg(long, value_parser = parse_confidence, value_name = "F")]
         min_confidence: Option<f64>,
@@ -189,13 +193,18 @@ fn resolve_target(
     })
 }
 
+/// The full URL of the /v1/systemone endpoint for a base URL.
+fn request_url(base_url: &str) -> String {
+    format!("{}/systemone", base_url.trim_end_matches('/'))
+}
+
 async fn send(
     base_url: &str,
     request: &Value,
     api_key: Option<&str>,
     timeout: Option<u64>,
 ) -> Result<Value> {
-    let url = format!("{}/systemone", base_url.trim_end_matches('/'));
+    let url = request_url(base_url);
     let mut builder = reqwest::Client::builder();
     if let Some(t) = timeout {
         builder = builder.timeout(Duration::from_secs(t));
@@ -239,6 +248,7 @@ async fn main() -> Result<()> {
             base_url,
             model,
             json,
+            dry_run,
             min_confidence,
             api_key,
             timeout,
@@ -264,6 +274,7 @@ async fn main() -> Result<()> {
 
             let mut results: Vec<(String, String, BTreeMap<String, Value>)> = Vec::new();
             let mut any_below = false;
+            let mut dry_printed = false;
             for name in &names {
                 let label = name
                     .map(str::to_string)
@@ -278,6 +289,16 @@ async fn main() -> Result<()> {
                     timeout,
                 )?;
                 let request = build_request(&target.model, &state, &preset, &vars)?;
+                if dry_run {
+                    // Show the exact request without sending it.
+                    if dry_printed {
+                        println!();
+                    }
+                    println!("POST {}", request_url(&target.base_url));
+                    println!("{}", serde_json::to_string_pretty(&request)?);
+                    dry_printed = true;
+                    continue;
+                }
                 let response = send(
                     &target.base_url,
                     &request,
@@ -307,6 +328,10 @@ async fn main() -> Result<()> {
                     }
                 }
                 results.push((label, target.model.clone(), answers));
+            }
+            if dry_run {
+                // The requests were printed above; nothing was sent.
+                return Ok(());
             }
             if comparing {
                 println!("{}", render_comparison(&results, json, colors));
