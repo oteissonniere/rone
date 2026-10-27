@@ -395,6 +395,101 @@ fn ask_dry_run_comparison_prints_one_block_per_profile() {
 }
 
 #[test]
+fn ask_composed_presets_merges_questions_in_one_request() {
+    let (url, server) = start_mock_server();
+    let config = empty_config();
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "ask",
+        "--preset",
+        "triage,severity",
+        "--text",
+        STATE,
+        "--base-url",
+        &url,
+        "--model",
+        "mock",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    // Every question of both presets is answered in a single request.
+    assert!(stdout.contains("department:"), "stdout: {stdout}");
+    assert!(stdout.contains("severity:"), "stdout: {stdout}");
+    assert!(stdout.contains("score: 5"), "stdout: {stdout}");
+    // `needs_human` is defined identically in both presets: deduplicated,
+    // answered once.
+    assert_eq!(
+        stdout.matches("needs_human:").count(),
+        1,
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("76.10%"), "stdout: {stdout}");
+    drop(server);
+}
+
+#[test]
+fn ask_composed_presets_conflicting_definitions_are_an_error() {
+    let config = empty_config();
+    // No server is started: the error must come from the preset merge,
+    // before any request.
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "ask",
+        "--preset",
+        "triage,escalation",
+        "--text",
+        STATE,
+        "--base-url",
+        "http://127.0.0.1:9/v1",
+        "--model",
+        "mock",
+    ]);
+
+    assert_eq!(code, 1, "stderr: {stderr}");
+    assert!(stdout.is_empty(), "stdout: {stdout}");
+    assert!(stderr.contains("needs_human"), "stderr: {stderr}");
+    assert!(stderr.contains("escalation"), "stderr: {stderr}");
+}
+
+#[test]
+fn ask_composed_presets_dry_run_prints_the_merged_request() {
+    let config = empty_config();
+    // No server is started: any connection attempt would fail, so a clean
+    // exit proves nothing was sent.
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "ask",
+        "--preset",
+        "triage,severity",
+        "--text",
+        STATE,
+        "--base-url",
+        "http://127.0.0.1:9/v1",
+        "--model",
+        "mock",
+        "--dry-run",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    // The single request carries the questions of both presets.
+    assert!(stdout.contains("\"department\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"severity\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"needs_human\""), "stdout: {stdout}");
+    // One request only, not one per preset.
+    assert_eq!(
+        stdout
+            .matches("POST http://127.0.0.1:9/v1/systemone\n")
+            .count(),
+        1,
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
 fn ask_comparison_json_is_array_with_profile_and_model() {
     let (url, server) = start_mock_server();
     let config = comparison_config(&url, "cmp-config-json.toml");
