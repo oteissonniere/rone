@@ -100,6 +100,9 @@ live endpoint):
   server, a self-hosted gateway, a hosted API), with a configurable base URL.
 - Reusable **presets**: describe your questions once in a small config file,
   then reuse them by name.
+- **Composable presets**: `--preset a,b` merges the question sets of several
+  presets into a single request, so guardrails can be chained (triage +
+  compliance, triage + severity, ...).
 - **Parametrizable input**: text from an argument, a file or stdin, plus
   variables injected into the question text.
 - **Readable output**: a table of options with their probabilities, and a
@@ -126,6 +129,10 @@ live endpoint):
   `presets/escalation.toml`, `presets/intent.toml`,
   `presets/sentiment.toml` and `presets/compliance.toml`);
   `rone list-presets` shows the presets of the current `presets/` directory.
+- **Composable presets**: `--preset a,b` (in `ask`) merges the questions of
+  several presets into one `/v1/systemone` request. A question id defined in
+  several presets is accepted only when the definitions are identical (the
+  same question, deduplicated); conflicting definitions are a clear error.
 - **Option descriptions**: an optional `criteria` table in a preset
   describes each `choice` option; without one, the option name is its own
   description.
@@ -201,6 +208,9 @@ instructions = "A human must handle this."
 ```bash
 # one-off question
 rone ask --preset triage --text "I was billed twice, please refund"
+
+# merge several presets into a single request (e.g. triage + compliance guardrail)
+rone ask --preset triage,compliance --text "I was billed twice, please refund"
 
 # list the presets available in presets/
 rone list-presets
