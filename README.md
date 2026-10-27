@@ -104,6 +104,8 @@ live endpoint):
   variables injected into the question text.
 - **Readable output**: a table of options with their probabilities, and a
   `--json` mode for scripts.
+- **Side-by-side comparison**: `--profile a,b` sends the same preset to
+  several servers/models at once and renders their answers side by side.
 - **Helpful validation**: catch common mistakes before sending (empty option
   lists, too many options in one `choice` question, low confidence), with clear
   messages instead of raw server errors.
@@ -149,7 +151,10 @@ live endpoint):
   pick one with `--profile` (or the `RONE_PROFILE` environment variable) or
   set a `default_profile`. Command-line flags override the profile. `rone list-profiles` shows the profiles of the loaded
   config file (the default is marked with `*`; literal `api_key` values are
-  hidden, `env:VAR` references are shown).
+  hidden, `env:VAR` references are shown). Passing a comma-separated list
+  (`--profile a,b`) sends the same preset to each listed profile and renders
+  their answers side by side, one labeled block per profile; JSON mode emits
+  an array of `{profile, model, answers}` objects.
 - **MCP server mode**: `rone mcp` serves the presets as MCP tools over stdio
   (`list_presets`, `ask`, `batch`), so AI agents can call them.
 - **Mock server** (`src/bin/mock_server.rs`): a local
@@ -207,6 +212,9 @@ rone ask --preset triage --text "I was billed twice" --no-color
 # act only when the model is confident enough (exit code 3 otherwise)
 rone ask --preset triage --text "I was billed twice" --min-confidence 0.9
 
+# compare two profiles (two servers/models) side by side
+rone ask --preset triage --text "I was billed twice" --profile local,production
+
 # inject variables into question instructions ({{name}} placeholders in the preset)
 rone ask --preset triage --text "I was billed twice" --var team=support --var lang=fr
 
@@ -250,7 +258,8 @@ timeout = 30
 Pick a profile with `--profile`, or set the `RONE_PROFILE` environment
 variable; without either, `default_profile` is used (and without that, the
 built-in defaults). An explicit `--profile` flag wins over the environment
-variable, and explicit flags always win over the profile:
+variable, and explicit flags always win over the profile. A comma-separated
+list (`--profile a,b`) compares the listed profiles side by side:
 
 ```bash
 # use the "production" profile
