@@ -131,6 +131,17 @@ pub fn profile_from_env() -> Option<String> {
     std::env::var("RONE_PROFILE").ok().filter(|s| !s.is_empty())
 }
 
+/// Parse a comma-separated profile list (as in `--profile a,b`): names are
+/// trimmed and empty entries dropped. An empty or all-empty list yields no
+/// profile.
+pub fn parse_profiles(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
 /// Displayable form of an api_key: `env:VAR` references are shown as-is,
 /// literal values are hidden (shown as `set`) so listing profiles never
 /// leaks a secret.
@@ -453,6 +464,33 @@ api_key = "sk-literal"
         unsafe { std::env::set_var("RONE_PROFILE", "") };
         assert_eq!(profile_from_env(), None);
         unsafe { std::env::remove_var("RONE_PROFILE") };
+    }
+
+    #[test]
+    fn parse_profiles_splits_comma_separated_names() {
+        assert_eq!(
+            parse_profiles("a,b,c"),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_profiles_trims_names_and_drops_empty_entries() {
+        assert_eq!(
+            parse_profiles(" a , b ,, c "),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_profiles_single_name() {
+        assert_eq!(parse_profiles("mini-ai"), vec!["mini-ai".to_string()]);
+    }
+
+    #[test]
+    fn parse_profiles_empty_is_no_profile() {
+        assert!(parse_profiles("").is_empty());
+        assert!(parse_profiles(",,").is_empty());
     }
 
     #[test]
