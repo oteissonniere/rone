@@ -9,11 +9,13 @@ use serde_json::Value;
 
 use rone::color::ColorMode;
 use rone::config::{
-    Config, Profile, load_config, profile_from_env, render_profiles, resolve_api_key,
+    Config, Profile, load_config, parse_profiles, profile_from_env, render_profiles,
+    resolve_api_key,
 };
 use rone::{
     below_threshold, build_request, extract_answers, list_presets, load_preset, parse_vars,
-    read_state, read_states, render_answers, render_batch, render_presets, validate,
+    read_state, read_states, render_answers, render_batch, render_comparison, render_presets,
+    validate,
 };
 
 mod mcp;
@@ -51,8 +53,9 @@ enum Command {
         #[arg(short, long, value_name = "PATH")]
         file: Option<PathBuf>,
 
-        /// Profile from the config file (sets base_url, model, min_confidence, api_key, timeout)
-        #[arg(long, value_name = "NAME")]
+        /// Profile from the config file (comma-separated list to compare several
+        /// profiles, e.g. `a,b`; sets base_url, model, min_confidence, api_key, timeout)
+        #[arg(long, value_name = "NAME[,NAME]")]
         profile: Option<String>,
 
         /// Base URL of the /v1/systemone-compatible endpoint (overrides the profile)
@@ -244,45 +247,75 @@ async fn main() -> Result<()> {
             // The RONE_PROFILE environment variable is a fallback for
             // --profile: an explicit flag always wins.
             let profile = profile.or_else(profile_from_env);
-            let target = resolve_target(
-                config.as_ref(),
-                profile.as_deref(),
-                base_url.as_deref(),
-                model.as_deref(),
-                min_confidence,
-                api_key.as_deref(),
-                timeout,
-            )?;
+            // `--profile a,b` compares the same preset over several
+            // profiles; a single profile (or none) keeps the plain output.
+            let profile_names = profile.as_deref().map(parse_profiles).unwrap_or_default();
+            let comparing = profile_names.len() > 1;
+            let names: Vec<Option<&str>> = if comparing {
+                profile_names.iter().map(String::as_str).map(Some).collect()
+            } else {
+                // None: the config's default profile (or built-in defaults).
+                vec![None]
+            };
             let preset = load_preset(&preset)?;
             validate(&preset)?;
             let state = read_state(&text, &file)?;
             let vars = parse_vars(&vars)?;
-            let request = build_request(&target.model, &state, &preset, &vars)?;
-            let response = send(
-                &target.base_url,
-                &request,
-                target.api_key.as_deref(),
-                target.timeout,
-            )
-            .await?;
-            let answers = extract_answers(&response);
-            println!("{}", render_answers(&answers, json, colors));
-            if let Some(min) = target.min_confidence {
-                let failed = below_threshold(&answers, min);
-                for (id, conf) in &failed {
-                    match conf {
-                        Some(c) => eprintln!(
-                            "warning: answer '{id}': confidence {c:.2} is below threshold {min:.2}"
-                        ),
-                        None => eprintln!(
-                            "warning: answer '{id}': no confidence reported, threshold is {min:.2}"
-                        ),
+
+            let mut results: Vec<(String, String, BTreeMap<String, Value>)> = Vec::new();
+            let mut any_below = false;
+            for name in &names {
+                let label = name
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "(default)".to_string());
+                let target = resolve_target(
+                    config.as_ref(),
+                    *name,
+                    base_url.as_deref(),
+                    model.as_deref(),
+                    min_confidence,
+                    api_key.as_deref(),
+                    timeout,
+                )?;
+                let request = build_request(&target.model, &state, &preset, &vars)?;
+                let response = send(
+                    &target.base_url,
+                    &request,
+                    target.api_key.as_deref(),
+                    target.timeout,
+                )
+                .await?;
+                let answers = extract_answers(&response);
+                // Warnings carry the profile name in comparison mode; a
+                // single profile keeps the plain message.
+                let prefix = if comparing {
+                    format!("profile '{label}': ")
+                } else {
+                    String::new()
+                };
+                if let Some(min) = target.min_confidence {
+                    for (id, conf) in &below_threshold(&answers, min) {
+                        any_below = true;
+                        match conf {
+                            Some(c) => eprintln!(
+                                "warning: {prefix}answer '{id}': confidence {c:.2} is below threshold {min:.2}"
+                            ),
+                            None => eprintln!(
+                                "warning: {prefix}answer '{id}': no confidence reported, threshold is {min:.2}"
+                            ),
+                        }
                     }
                 }
-                if !failed.is_empty() {
-                    // Exit code 3: answers received, but below the confidence threshold.
-                    std::process::exit(3);
-                }
+                results.push((label, target.model.clone(), answers));
+            }
+            if comparing {
+                println!("{}", render_comparison(&results, json, colors));
+            } else {
+                println!("{}", render_answers(&results[0].2, json, colors));
+            }
+            if any_below {
+                // Exit code 3: answers received, but below the confidence threshold.
+                std::process::exit(3);
             }
         }
         Command::Batch {

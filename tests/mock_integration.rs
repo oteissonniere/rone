@@ -82,6 +82,19 @@ fn batch_input_file(name: &str, lines: &[&str]) -> PathBuf {
     path
 }
 
+/// A temp config with two profiles (`a` and `b`) pointing at the same mock
+/// endpoint, for `--profile a,b` comparison tests.
+fn comparison_config(url: &str, name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("rone-it-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    let content = format!(
+        "[profiles.a]\nbase_url = \"{url}\"\nmodel = \"mock\"\n\n[profiles.b]\nbase_url = \"{url}\"\nmodel = \"mock\"\n"
+    );
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
 /// Run the `rone` binary and capture its exit code and output.
 fn run_rone(args: &[&str]) -> (i32, String, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_rone"))
@@ -285,5 +298,61 @@ fn batch_json_exits_3_when_any_answer_is_below_threshold() {
     assert!(arr[1]["answers"].get("needs_human").is_some());
     assert!(stderr.contains("input #1"), "stderr: {stderr}");
     assert!(stderr.contains("input #2"), "stderr: {stderr}");
+    drop(server);
+}
+
+#[test]
+fn ask_comparison_renders_one_block_per_profile() {
+    let (url, server) = start_mock_server();
+    let config = comparison_config(&url, "cmp-config-text.toml");
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "ask",
+        "--preset",
+        "triage",
+        "--text",
+        STATE,
+        "--profile",
+        "a,b",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    // Each profile gets its own labeled block.
+    assert!(stdout.contains("--- a (mock) ---"), "stdout: {stdout}");
+    assert!(stdout.contains("--- b (mock) ---"), "stdout: {stdout}");
+    // The mock answers are a pure function of the input, so both profiles
+    // pick the same option.
+    assert_eq!(stdout.matches("*sales").count(), 2, "stdout: {stdout}");
+    drop(server);
+}
+
+#[test]
+fn ask_comparison_json_is_array_with_profile_and_model() {
+    let (url, server) = start_mock_server();
+    let config = comparison_config(&url, "cmp-config-json.toml");
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "ask",
+        "--preset",
+        "triage",
+        "--text",
+        STATE,
+        "--profile",
+        "a,b",
+        "--json",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    let arr: Vec<Value> = serde_json::from_str(&stdout).expect("stdout is a JSON array");
+    assert_eq!(arr.len(), 2);
+    assert_eq!(arr[0]["profile"], "a");
+    assert_eq!(arr[0]["model"], "mock");
+    assert_eq!(arr[1]["profile"], "b");
+    assert_eq!(arr[0]["answers"]["department"]["choice"], "sales");
+    assert_eq!(arr[1]["answers"]["department"]["choice"], "sales");
     drop(server);
 }
