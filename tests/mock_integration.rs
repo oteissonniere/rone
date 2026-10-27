@@ -329,6 +329,72 @@ fn ask_comparison_renders_one_block_per_profile() {
 }
 
 #[test]
+fn ask_dry_run_prints_the_request_without_sending() {
+    let config = empty_config();
+    // No server is started: any connection attempt would fail, so a clean
+    // exit proves nothing was sent.
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "ask",
+        "--preset",
+        "triage",
+        "--text",
+        STATE,
+        "--base-url",
+        "http://127.0.0.1:9/v1",
+        "--model",
+        "mock",
+        "--dry-run",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(
+        stdout.starts_with("POST http://127.0.0.1:9/v1/systemone\n"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("\"model\": \"mock\""), "stdout: {stdout}");
+    assert!(
+        stdout.contains("\"state\": \"I was billed twice for the same invoice.\""),
+        "stdout: {stdout}"
+    );
+    // The request is printed, not an answer: no rendering markers.
+    assert!(!stdout.contains('%'), "stdout: {stdout}");
+}
+
+#[test]
+fn ask_dry_run_comparison_prints_one_block_per_profile() {
+    let config = comparison_config("http://127.0.0.1:9/v1", "cmp-config-dry.toml");
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "ask",
+        "--preset",
+        "triage",
+        "--text",
+        STATE,
+        "--profile",
+        "a,b",
+        "--dry-run",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(
+        stdout
+            .matches("POST http://127.0.0.1:9/v1/systemone\n")
+            .count(),
+        2,
+        "stdout: {stdout}"
+    );
+    assert_eq!(
+        stdout.matches("\"model\": \"mock\"").count(),
+        2,
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
 fn ask_comparison_json_is_array_with_profile_and_model() {
     let (url, server) = start_mock_server();
     let config = comparison_config(&url, "cmp-config-json.toml");
