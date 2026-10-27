@@ -357,6 +357,37 @@ pub fn render_batch(
     out
 }
 
+/// Render comparison results: the same questions answered by several
+/// profiles, one labeled block per profile in text mode, a JSON array of
+/// `{"profile", "model", "answers"}` objects in JSON mode.
+pub fn render_comparison(
+    results: &[(String, String, BTreeMap<String, Value>)],
+    as_json: bool,
+    colors: ColorMode,
+) -> String {
+    if as_json {
+        let arr: Vec<Value> = results
+            .iter()
+            .map(|(profile, model, answers)| {
+                json!({ "profile": profile, "model": model, "answers": answers })
+            })
+            .collect();
+        return serde_json::to_string_pretty(&arr).unwrap_or_default();
+    }
+    let mut out = String::new();
+    for (i, (profile, model, answers)) in results.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "{}\n",
+            colors.bold(&format!("--- {profile} ({model}) ---"))
+        ));
+        out.push_str(&render_answers(answers, false, colors));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -794,5 +825,48 @@ instructions = "A human must handle this."
         assert_eq!(arr[0]["input"], "first");
         assert_eq!(arr[1]["input"], "second");
         assert_eq!(arr[0]["answers"]["a"]["noul"], 0.5);
+    }
+
+    #[test]
+    fn render_comparison_text_has_labeled_blocks() {
+        let answers = extract_answers(&json!({
+            "answers": {
+                "department": {
+                    "type": "choice",
+                    "choice": "billing",
+                    "probabilities": {"billing": 0.97, "technical": 0.03}
+                }
+            }
+        }));
+        let results = vec![
+            (
+                "macbookpro".to_string(),
+                "laya".to_string(),
+                answers.clone(),
+            ),
+            ("mini-ai".to_string(), "laya".to_string(), answers),
+        ];
+        let out = render_comparison(&results, false, ColorMode::off());
+        assert!(out.contains("--- macbookpro (laya) ---"));
+        assert!(out.contains("--- mini-ai (laya) ---"));
+        // Each profile gets its own block of answers.
+        assert_eq!(out.matches("*billing").count(), 2);
+    }
+
+    #[test]
+    fn render_comparison_json_is_array_with_profile_and_model() {
+        let answers = extract_answers(&json!({"answers": {"a": {"noul": 0.5}}}));
+        let results = vec![
+            ("p1".to_string(), "m1".to_string(), answers.clone()),
+            ("p2".to_string(), "m2".to_string(), answers),
+        ];
+        let out = render_comparison(&results, true, ColorMode::off());
+        let parsed: Value = serde_json::from_str(&out).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["profile"], "p1");
+        assert_eq!(arr[0]["model"], "m1");
+        assert_eq!(arr[0]["answers"]["a"]["noul"], 0.5);
+        assert_eq!(arr[1]["profile"], "p2");
     }
 }
