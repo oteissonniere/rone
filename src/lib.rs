@@ -19,12 +19,12 @@ pub mod config;
 pub mod mock;
 
 /// A preset file: `presets/<name>.toml`.
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug, PartialEq)]
 pub struct Preset {
     pub questions: BTreeMap<String, QuestionDef>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug, PartialEq)]
 pub struct QuestionDef {
     #[serde(rename = "type")]
     pub kind: QuestionType,
@@ -63,6 +63,39 @@ pub fn load_preset(name: &str) -> Result<Preset> {
     let preset =
         parse_preset(&content).with_context(|| format!("in preset file {}", path.display()))?;
     Ok(preset)
+}
+
+/// Load several presets and merge their question sets into one preset:
+/// every question of every given preset, answered in a single request. A
+/// question id defined in several presets is accepted only when the
+/// definitions are identical (the same question); conflicting
+/// definitions are an error.
+pub fn load_presets(names: &[String]) -> Result<Preset> {
+    if names.is_empty() {
+        bail!("no preset given");
+    }
+    let mut merged = Preset {
+        questions: BTreeMap::new(),
+    };
+    for name in names {
+        let preset = load_preset(name)?;
+        for (id, q) in preset.questions {
+            match merged.questions.get(&id) {
+                Some(existing) => {
+                    if *existing != q {
+                        bail!(
+                            "question '{id}' is defined differently in preset '{name}'; \
+                             keep a single definition for this question"
+                        );
+                    }
+                }
+                None => {
+                    merged.questions.insert(id, q);
+                }
+            }
+        }
+    }
+    Ok(merged)
 }
 
 /// List the names of the presets available in `presets/` (sorted).
@@ -459,6 +492,35 @@ instructions = "A human must handle this."
     fn list_presets_finds_the_repo_presets() {
         let names = list_presets().unwrap();
         assert!(names.contains(&"triage".to_string()));
+    }
+
+    #[test]
+    fn load_presets_merges_question_sets() {
+        // `needs_human` is defined identically in triage and severity, so
+        // it is deduplicated, not an error.
+        let preset = load_presets(&["triage".to_string(), "severity".to_string()]).unwrap();
+        let ids: Vec<&str> = preset.questions.keys().map(String::as_str).collect();
+        assert_eq!(ids, vec!["department", "needs_human", "severity"]);
+    }
+
+    #[test]
+    fn load_presets_single_name_is_the_preset_itself() {
+        let merged = load_presets(&["triage".to_string()]).unwrap();
+        let single = load_preset("triage").unwrap();
+        assert_eq!(merged, single);
+    }
+
+    #[test]
+    fn load_presets_rejects_conflicting_definitions() {
+        // escalation defines needs_human with different instructions.
+        let err = load_presets(&["triage".to_string(), "escalation".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("needs_human"));
+        assert!(err.to_string().contains("escalation"));
+    }
+
+    #[test]
+    fn load_presets_rejects_empty_list() {
+        assert!(load_presets(&[]).is_err());
     }
 
     #[test]
