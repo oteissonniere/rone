@@ -13,9 +13,9 @@ use rone::config::{
     resolve_api_key,
 };
 use rone::{
-    below_threshold, build_request, extract_answers, list_presets, load_preset, parse_vars,
-    read_state, read_states, render_answers, render_batch, render_comparison, render_presets,
-    validate,
+    below_threshold, build_request, extract_answers, list_presets, load_preset, load_presets,
+    parse_vars, read_state, read_states, render_answers, render_batch, render_comparison,
+    render_presets, validate,
 };
 
 mod mcp;
@@ -41,8 +41,9 @@ struct Cli {
 enum Command {
     /// Ask a System One model using a reusable preset.
     Ask {
-        /// Preset name, loaded from presets/<name>.toml
-        #[arg(long)]
+        /// Preset name, loaded from presets/<name>.toml (comma-separated list to merge
+        /// several presets into one request, e.g. `a,b`)
+        #[arg(long, value_name = "NAME[,NAME]")]
         preset: String,
 
         /// Input text (use --file or stdin for longer input)
@@ -267,7 +268,15 @@ async fn main() -> Result<()> {
                 // None: the config's default profile (or built-in defaults).
                 vec![None]
             };
-            let preset = load_preset(&preset)?;
+            // `--preset a,b` merges the question sets of several presets into
+            // one request; identical shared questions are deduplicated.
+            let preset_names: Vec<String> = preset
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            let preset = load_presets(&preset_names)?;
             validate(&preset)?;
             let state = read_state(&text, &file)?;
             let vars = parse_vars(&vars)?;
