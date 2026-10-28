@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -360,6 +361,22 @@ pub fn render_answers(
         }
     }
     out
+}
+
+/// Format a duration as a short human-friendly string: `842 ms` below one
+/// second, `1.2 s` at a second and above.
+pub fn format_duration(elapsed: Duration) -> String {
+    let ms = elapsed.as_millis();
+    if ms >= 1000 {
+        format!("{:.1} s", ms as f64 / 1000.0)
+    } else {
+        format!("{ms} ms")
+    }
+}
+
+/// Render a request latency as a display line: `elapsed: 842 ms`.
+pub fn render_latency(elapsed: Duration) -> String {
+    format!("elapsed: {}", format_duration(elapsed))
 }
 
 /// Render a batch of (input, answers) pairs: one numbered block per input in
@@ -930,5 +947,25 @@ instructions = "A human must handle this."
         assert_eq!(arr[0]["model"], "m1");
         assert_eq!(arr[0]["answers"]["a"]["noul"], 0.5);
         assert_eq!(arr[1]["profile"], "p2");
+    }
+
+    #[test]
+    fn format_duration_uses_ms_below_one_second() {
+        assert_eq!(format_duration(Duration::from_millis(842)), "842 ms");
+        assert_eq!(format_duration(Duration::from_millis(999)), "999 ms");
+    }
+
+    #[test]
+    fn format_duration_uses_seconds_from_one_second_up() {
+        assert_eq!(format_duration(Duration::from_millis(1000)), "1.0 s");
+        assert_eq!(format_duration(Duration::from_millis(1234)), "1.2 s");
+    }
+
+    #[test]
+    fn render_latency_is_a_display_line() {
+        assert_eq!(
+            render_latency(Duration::from_millis(842)),
+            "elapsed: 842 ms"
+        );
     }
 }
