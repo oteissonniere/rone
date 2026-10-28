@@ -379,22 +379,23 @@ pub fn render_latency(elapsed: Duration) -> String {
     format!("elapsed: {}", format_duration(elapsed))
 }
 
-/// Render a batch of (input, answers) pairs: one numbered block per input in
-/// text mode, a JSON array of `{"input", "answers"}` objects in JSON mode.
+/// Render a batch of (input, answers, latency) triples: one numbered block
+/// per input in text mode, each followed by its `elapsed: ...` line, and a
+/// JSON array of `{"input", "answers"}` objects in JSON mode.
 pub fn render_batch(
-    results: &[(String, BTreeMap<String, Value>)],
+    results: &[(String, BTreeMap<String, Value>, Duration)],
     as_json: bool,
     colors: ColorMode,
 ) -> String {
     if as_json {
         let arr: Vec<Value> = results
             .iter()
-            .map(|(input, answers)| json!({ "input": input, "answers": answers }))
+            .map(|(input, answers, _)| json!({ "input": input, "answers": answers }))
             .collect();
         return serde_json::to_string_pretty(&arr).unwrap_or_default();
     }
     let mut out = String::new();
-    for (i, (input, answers)) in results.iter().enumerate() {
+    for (i, (input, answers, elapsed)) in results.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
@@ -403,29 +404,32 @@ pub fn render_batch(
             colors.bold(&format!("#{}: {input}", i + 1))
         ));
         out.push_str(&render_answers(answers, false, colors));
+        out.push('\n');
+        out.push_str(&format!("{}\n", render_latency(*elapsed)));
     }
     out
 }
 
 /// Render comparison results: the same questions answered by several
-/// profiles, one labeled block per profile in text mode, a JSON array of
+/// profiles, one labeled block per profile in text mode, each followed by
+/// its `elapsed: ...` line, and a JSON array of
 /// `{"profile", "model", "answers"}` objects in JSON mode.
 pub fn render_comparison(
-    results: &[(String, String, BTreeMap<String, Value>)],
+    results: &[(String, String, BTreeMap<String, Value>, Duration)],
     as_json: bool,
     colors: ColorMode,
 ) -> String {
     if as_json {
         let arr: Vec<Value> = results
             .iter()
-            .map(|(profile, model, answers)| {
+            .map(|(profile, model, answers, _)| {
                 json!({ "profile": profile, "model": model, "answers": answers })
             })
             .collect();
         return serde_json::to_string_pretty(&arr).unwrap_or_default();
     }
     let mut out = String::new();
-    for (i, (profile, model, answers)) in results.iter().enumerate() {
+    for (i, (profile, model, answers, elapsed)) in results.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
@@ -434,6 +438,8 @@ pub fn render_comparison(
             colors.bold(&format!("--- {profile} ({model}) ---"))
         ));
         out.push_str(&render_answers(answers, false, colors));
+        out.push('\n');
+        out.push_str(&format!("{}\n", render_latency(*elapsed)));
     }
     out
 }
@@ -882,11 +888,17 @@ instructions = "A human must handle this."
                 }
             }
         }));
-        let results = vec![("I was billed twice".to_string(), answers)];
+        let results = vec![(
+            "I was billed twice".to_string(),
+            answers,
+            Duration::from_millis(842),
+        )];
         let out = render_batch(&results, false, ColorMode::off());
         assert!(out.starts_with("#1: I was billed twice\n"));
         assert!(out.contains("*billing"));
         assert!(out.contains("97.00%"));
+        // The latency line sits under the answers.
+        assert!(out.contains("elapsed: 842 ms"));
     }
 
     #[test]
@@ -894,8 +906,12 @@ instructions = "A human must handle this."
         let response = json!({"answers": {"a": {"noul": 0.5}}});
         let answers = extract_answers(&response);
         let results = vec![
-            ("first".to_string(), answers.clone()),
-            ("second".to_string(), answers),
+            (
+                "first".to_string(),
+                answers.clone(),
+                Duration::from_millis(11),
+            ),
+            ("second".to_string(), answers, Duration::from_millis(22)),
         ];
         let out = render_batch(&results, true, ColorMode::off());
         let parsed: Value = serde_json::from_str(&out).unwrap();
@@ -922,22 +938,43 @@ instructions = "A human must handle this."
                 "macbookpro".to_string(),
                 "laya".to_string(),
                 answers.clone(),
+                Duration::from_millis(842),
             ),
-            ("mini-ai".to_string(), "laya".to_string(), answers),
+            (
+                "mini-ai".to_string(),
+                "laya".to_string(),
+                answers,
+                Duration::from_millis(900),
+            ),
         ];
         let out = render_comparison(&results, false, ColorMode::off());
         assert!(out.contains("--- macbookpro (laya) ---"));
         assert!(out.contains("--- mini-ai (laya) ---"));
         // Each profile gets its own block of answers.
         assert_eq!(out.matches("*billing").count(), 2);
+        // Each block carries its own latency line.
+        assert_eq!(
+            out.lines().filter(|l| l.starts_with("elapsed: ")).count(),
+            2
+        );
     }
 
     #[test]
     fn render_comparison_json_is_array_with_profile_and_model() {
         let answers = extract_answers(&json!({"answers": {"a": {"noul": 0.5}}}));
         let results = vec![
-            ("p1".to_string(), "m1".to_string(), answers.clone()),
-            ("p2".to_string(), "m2".to_string(), answers),
+            (
+                "p1".to_string(),
+                "m1".to_string(),
+                answers.clone(),
+                Duration::from_millis(11),
+            ),
+            (
+                "p2".to_string(),
+                "m2".to_string(),
+                answers,
+                Duration::from_millis(22),
+            ),
         ];
         let out = render_comparison(&results, true, ColorMode::off());
         let parsed: Value = serde_json::from_str(&out).unwrap();

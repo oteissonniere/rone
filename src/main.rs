@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -13,9 +13,9 @@ use rone::config::{
     resolve_api_key,
 };
 use rone::{
-    below_threshold, build_request, extract_answers, list_presets, load_preset, load_presets,
-    parse_vars, read_state, read_states, render_answers, render_batch, render_comparison,
-    render_presets, validate,
+    below_threshold, build_request, extract_answers, format_duration, list_presets, load_preset,
+    load_presets, parse_vars, read_state, read_states, render_answers, render_batch,
+    render_comparison, render_latency, render_presets, validate,
 };
 
 mod mcp;
@@ -281,7 +281,7 @@ async fn main() -> Result<()> {
             let state = read_state(&text, &file)?;
             let vars = parse_vars(&vars)?;
 
-            let mut results: Vec<(String, String, BTreeMap<String, Value>)> = Vec::new();
+            let mut results: Vec<(String, String, BTreeMap<String, Value>, Duration)> = Vec::new();
             let mut any_below = false;
             let mut dry_printed = false;
             for name in &names {
@@ -308,6 +308,7 @@ async fn main() -> Result<()> {
                     dry_printed = true;
                     continue;
                 }
+                let started = Instant::now();
                 let response = send(
                     &target.base_url,
                     &request,
@@ -315,6 +316,7 @@ async fn main() -> Result<()> {
                     target.timeout,
                 )
                 .await?;
+                let elapsed = started.elapsed();
                 let answers = extract_answers(&response);
                 // Warnings carry the profile name in comparison mode; a
                 // single profile keeps the plain message.
@@ -336,7 +338,7 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                results.push((label, target.model.clone(), answers));
+                results.push((label, target.model.clone(), answers, elapsed));
             }
             if dry_run {
                 // The requests were printed above; nothing was sent.
@@ -345,7 +347,12 @@ async fn main() -> Result<()> {
             if comparing {
                 println!("{}", render_comparison(&results, json, colors));
             } else {
-                println!("{}", render_answers(&results[0].2, json, colors));
+                let mut out = render_answers(&results[0].2, json, colors);
+                if !json {
+                    out.push('\n');
+                    out.push_str(&render_latency(results[0].3));
+                }
+                println!("{out}");
             }
             if any_below {
                 // Exit code 3: answers received, but below the confidence threshold.
@@ -380,10 +387,12 @@ async fn main() -> Result<()> {
             validate(&preset)?;
             let states = read_states(&file)?;
             let vars = parse_vars(&vars)?;
-            let mut results: Vec<(String, BTreeMap<String, Value>)> = Vec::new();
+            let mut results: Vec<(String, BTreeMap<String, Value>, Duration)> = Vec::new();
             let mut any_below = false;
+            let total_started = Instant::now();
             for (i, state) in states.iter().enumerate() {
                 let request = build_request(&target.model, state, &preset, &vars)?;
+                let started = Instant::now();
                 let response = send(
                     &target.base_url,
                     &request,
@@ -391,6 +400,7 @@ async fn main() -> Result<()> {
                     target.timeout,
                 )
                 .await?;
+                let elapsed = started.elapsed();
                 let answers = extract_answers(&response);
                 if let Some(min) = target.min_confidence {
                     for (id, conf) in &below_threshold(&answers, min) {
@@ -407,9 +417,13 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                results.push((state.clone(), answers));
+                results.push((state.clone(), answers, elapsed));
             }
             println!("{}", render_batch(&results, json, colors));
+            // The total covers the whole batch, measured around the loop.
+            if !json {
+                println!("total: {}", format_duration(total_started.elapsed()));
+            }
             if any_below {
                 // Exit code 3: answers received, but at least one is below the
                 // confidence threshold.

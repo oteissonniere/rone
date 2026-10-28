@@ -137,6 +137,38 @@ fn ask_renders_answers_in_text_mode() {
 }
 
 #[test]
+fn ask_text_mode_shows_request_latency() {
+    let (url, server) = start_mock_server();
+    let config = empty_config();
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "ask",
+        "--preset",
+        "triage",
+        "--text",
+        STATE,
+        "--base-url",
+        &url,
+        "--model",
+        "mock",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    // A single latency line sits under the answers, e.g. "elapsed: 842 ms".
+    let line = stdout
+        .lines()
+        .find(|l| l.starts_with("elapsed: "))
+        .unwrap_or_else(|| panic!("no latency line in stdout: {stdout}"));
+    assert!(
+        line.ends_with(" ms") || line.ends_with(" s"),
+        "stdout: {stdout}"
+    );
+    drop(server);
+}
+
+#[test]
 fn ask_json_matches_the_pinned_mock_values() {
     let (url, server) = start_mock_server();
     let config = empty_config();

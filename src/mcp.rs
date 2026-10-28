@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -319,7 +320,32 @@ async fn batch_inner(args: &Value) -> Result<ToolOutcome> {
         results.push((state.clone(), answers));
     }
 
-    let mut text = render_batch(&results, common.as_json, ColorMode::off());
+    // The latency line is a CLI-only feature: in JSON mode the batch is
+    // rendered through render_batch (the zero duration is ignored there),
+    // and in text mode the numbered blocks are rendered directly so the
+    // MCP output stays unchanged.
+    let text = if common.as_json {
+        let with_latency: Vec<(String, BTreeMap<String, Value>, Duration)> = results
+            .iter()
+            .map(|(state, answers)| (state.clone(), answers.clone(), Duration::ZERO))
+            .collect();
+        render_batch(&with_latency, true, ColorMode::off())
+    } else {
+        results
+            .iter()
+            .enumerate()
+            .map(|(i, (state, answers))| {
+                format!(
+                    "#{}: {}\n{}",
+                    i + 1,
+                    state,
+                    render_answers(answers, false, ColorMode::off())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut text = text;
     let below = any_below;
     if below {
         text = format!("{warnings}{text}");
