@@ -143,6 +143,9 @@ live endpoint):
   `--json` mode for scripts. Text output is colored on a terminal (bold ids,
   green/yellow/red magnitudes); piping disables colors, `--no-color` forces
   them off, and the `NO_COLOR` environment variable is honored.
+- **Request latency**: in text mode, the duration of each request is shown
+  under the answer table (`elapsed: 842 ms`, seconds above 1 s); in batch
+  mode one line per input plus a `total:` line for the whole run.
 - **Validation**: rejects empty `choice` option lists and criteria entries
   for unknown options, and warns when a single `choice` question has many
   options.
