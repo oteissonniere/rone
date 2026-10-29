@@ -95,6 +95,15 @@ fn comparison_config(url: &str, name: &str) -> PathBuf {
     path
 }
 
+/// A temp eval dataset file (a JSON array of {"input", "expected"} objects).
+fn eval_dataset_file(name: &str, json: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("rone-it-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, json).unwrap();
+    path
+}
+
 /// Run the `rone` binary and capture its exit code and output.
 fn run_rone(args: &[&str]) -> (i32, String, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_rone"))
@@ -566,5 +575,148 @@ fn models_lists_the_available_models() {
     assert_eq!(code, 0, "stderr: {stderr}");
     // The mock advertises a single model, `mock`.
     assert!(stdout.contains("mock"), "stdout: {stdout}");
+    drop(server);
+}
+
+#[test]
+fn eval_all_matches_renders_full_report() {
+    let (url, server) = start_mock_server();
+    let config = empty_config();
+    let dataset = eval_dataset_file(
+        "eval-all.json",
+        r#"[
+            { "input": "I was billed twice for the same invoice.",
+              "expected": { "department": "sales", "needs_human": "yes" } },
+            { "input": "My router keeps dropping the connection.",
+              "expected": { "department": "technical", "needs_human": "yes" } }
+        ]"#,
+    );
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "eval",
+        "--preset",
+        "triage",
+        "--file",
+        dataset.to_str().unwrap(),
+        "--base-url",
+        &url,
+        "--model",
+        "mock",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(
+        stdout.contains("eval: 2 inputs, 4 answers"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("department"), "stdout: {stdout}");
+    assert!(stdout.contains("needs_human"), "stdout: {stdout}");
+    assert!(stdout.contains("2/2"), "stdout: {stdout}");
+    assert!(stdout.contains("100.0%"), "stdout: {stdout}");
+    assert!(stdout.contains("all answers match"), "stdout: {stdout}");
+    drop(server);
+}
+
+#[test]
+fn eval_json_report_tallies_per_question_and_overall() {
+    let (url, server) = start_mock_server();
+    let config = empty_config();
+    let dataset = eval_dataset_file(
+        "eval-json.json",
+        r#"[
+            { "input": "I was billed twice for the same invoice.",
+              "expected": { "department": "sales", "needs_human": "yes" } },
+            { "input": "My router keeps dropping the connection.",
+              "expected": { "department": "technical", "needs_human": "yes" } }
+        ]"#,
+    );
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "eval",
+        "--preset",
+        "triage",
+        "--file",
+        dataset.to_str().unwrap(),
+        "--base-url",
+        &url,
+        "--model",
+        "mock",
+        "--json",
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    let parsed: Value = serde_json::from_str(&stdout).expect("stdout is JSON");
+    assert_eq!(parsed["inputs"], 2);
+    assert_eq!(parsed["answers"], 4);
+    let questions = parsed["questions"].as_array().unwrap();
+    assert_eq!(questions.len(), 2);
+    let dept = questions
+        .iter()
+        .find(|q| q["question"] == "department")
+        .expect("department question");
+    assert_eq!(dept["correct"], 2);
+    assert_eq!(dept["total"], 2);
+    assert_eq!(dept["accuracy"], 1.0);
+    let noul = questions
+        .iter()
+        .find(|q| q["question"] == "needs_human")
+        .expect("needs_human question");
+    assert_eq!(noul["accuracy"], 1.0);
+    assert!(parsed["misses"].as_array().unwrap().is_empty());
+    assert_eq!(parsed["overall"]["correct"], 4);
+    assert_eq!(parsed["overall"]["total"], 4);
+    assert_eq!(parsed["overall"]["accuracy"], 1.0);
+    drop(server);
+}
+
+#[test]
+fn eval_misses_are_listed_with_expected_and_got() {
+    let (url, server) = start_mock_server();
+    let config = empty_config();
+    let dataset = eval_dataset_file(
+        "eval-miss.json",
+        r#"[
+            { "input": "I was billed twice for the same invoice.",
+              "expected": { "department": "billing" } },
+            { "input": "My router keeps dropping the connection.",
+              "expected": { "department": "technical" } }
+        ]"#,
+    );
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "eval",
+        "--preset",
+        "triage",
+        "--file",
+        dataset.to_str().unwrap(),
+        "--base-url",
+        &url,
+        "--model",
+        "mock",
+    ]);
+
+    // A miss does not change the exit code: the report is the result.
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(
+        stdout.contains("eval: 2 inputs, 2 answers"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("1/2"), "stdout: {stdout}");
+    assert!(stdout.contains("50.0%"), "stdout: {stdout}");
+    assert!(stdout.contains("misses:"), "stdout: {stdout}");
+    assert!(
+        stdout.contains(&format!("  [1] {STATE:?}")),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("department: expected billing, got sales"),
+        "stdout: {stdout}"
+    );
     drop(server);
 }
