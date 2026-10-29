@@ -144,6 +144,10 @@ enum Command {
         /// Profile from the config file (sets base_url, api_key, timeout)
         #[arg(long, value_name = "NAME")]
         profile: Option<String>,
+
+        /// Base URL of the endpoint (overrides the profile)
+        #[arg(long, value_name = "URL")]
+        base_url: Option<String>,
     },
 }
 
@@ -479,12 +483,12 @@ async fn main() -> Result<()> {
             ),
         },
         Command::Mcp => mcp::run().await?,
-        Command::Models { profile } => {
+        Command::Models { profile, base_url } => {
             let profile = profile.or_else(profile_from_env);
             let target = resolve_target(
                 config.as_ref(),
                 profile.as_deref(),
-                None,
+                base_url.as_deref(),
                 None,
                 None,
                 None,
