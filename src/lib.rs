@@ -539,6 +539,159 @@ pub fn render_comparison(
     out
 }
 
+/// The outcome of one eval case: the input, the expected answers, and the
+/// answers the model actually produced.
+pub struct EvalResult {
+    pub input: String,
+    pub expected: BTreeMap<String, Value>,
+    pub answers: BTreeMap<String, Value>,
+}
+
+/// One miss in an eval report: the case index (1-based), its input, the
+/// question, and the expected vs. got values (`<missing>` when the model
+/// answered nothing).
+struct EvalMiss {
+    index: usize,
+    input: String,
+    question: String,
+    expected: String,
+    got: String,
+}
+
+/// Render the eval report: per-question accuracy over all cases plus the
+/// list of misses, or a JSON object with the same tallies.
+pub fn render_eval_report(results: &[EvalResult], as_json: bool, colors: ColorMode) -> String {
+    let (questions, misses) = tally_eval(results);
+    let total: usize = questions.iter().map(|(_, _, t)| *t).sum();
+    let correct: usize = questions.iter().map(|(_, c, _)| *c).sum();
+    if as_json {
+        let questions: Vec<Value> = questions
+            .iter()
+            .map(|(q, c, t)| {
+                json!({
+                    "question": q,
+                    "correct": c,
+                    "total": t,
+                    "accuracy": accuracy_ratio(*c, *t),
+                })
+            })
+            .collect();
+        let misses: Vec<Value> = misses
+            .iter()
+            .map(|m| {
+                json!({
+                    "input": m.input,
+                    "question": m.question,
+                    "expected": m.expected,
+                    "got": m.got,
+                })
+            })
+            .collect();
+        return serde_json::to_string_pretty(&json!({
+            "inputs": results.len(),
+            "answers": total,
+            "questions": questions,
+            "misses": misses,
+            "overall": {
+                "correct": correct,
+                "total": total,
+                "accuracy": accuracy_ratio(correct, total),
+            },
+        }))
+        .unwrap_or_default();
+    }
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{}\n",
+        colors.bold(&format!(
+            "eval: {} inputs, {} answers",
+            results.len(),
+            total
+        ))
+    ));
+    for (q, c, t) in &questions {
+        let ratio = accuracy_ratio(*c, *t);
+        let pct = format!("{:.1}%", ratio * 100.0);
+        out.push_str(&format!(
+            "  {:12}  {}/{}  {}\n",
+            q,
+            c,
+            t,
+            paint_accuracy(colors, &pct, ratio)
+        ));
+    }
+    if misses.is_empty() {
+        out.push_str("all answers match\n");
+        return out;
+    }
+    out.push_str(&colors.bold("misses:\n"));
+    let mut last_index: Option<usize> = None;
+    for miss in &misses {
+        if last_index != Some(miss.index) {
+            out.push_str(&format!("  [{}] {:?}\n", miss.index, miss.input));
+            last_index = Some(miss.index);
+        }
+        out.push_str(&format!(
+            "      {}: expected {}, got {}\n",
+            miss.question,
+            miss.expected,
+            colors.red(&miss.got)
+        ));
+    }
+    out
+}
+
+/// Tally the eval results: per-question `(correct, total)` in question
+/// order, plus the misses in case order.
+fn tally_eval(results: &[EvalResult]) -> (Vec<(String, usize, usize)>, Vec<EvalMiss>) {
+    let mut per_question: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut misses = Vec::new();
+    for (i, r) in results.iter().enumerate() {
+        for (q, want) in &r.expected {
+            let entry = per_question.entry(q.clone()).or_insert((0, 0));
+            entry.1 += 1;
+            let answer = r.answers.get(q).unwrap_or(&Value::Null);
+            if answer_matches(answer, want) {
+                entry.0 += 1;
+            } else {
+                misses.push(EvalMiss {
+                    index: i + 1,
+                    input: r.input.clone(),
+                    question: q.clone(),
+                    expected: expected_value(want).unwrap_or_default(),
+                    got: answer_value(answer).unwrap_or_else(|| "<missing>".to_string()),
+                });
+            }
+        }
+    }
+    let questions = per_question
+        .into_iter()
+        .map(|(q, (c, t))| (q, c, t))
+        .collect();
+    (questions, misses)
+}
+
+/// The accuracy ratio of `correct` out of `total` (0 when `total` is 0).
+fn accuracy_ratio(correct: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        correct as f64 / total as f64
+    }
+}
+
+/// Paint an accuracy percentage: green at 90% and up, yellow from 70%,
+/// red below.
+fn paint_accuracy(colors: ColorMode, text: &str, ratio: f64) -> String {
+    if ratio >= 0.9 {
+        colors.green(text)
+    } else if ratio >= 0.7 {
+        colors.yellow(text)
+    } else {
+        colors.red(text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1249,5 +1402,93 @@ instructions = "A human must handle this."
             &json!({"type": "choice"}),
             &json!("billing")
         ));
+    }
+
+    /// One eval case with two matching answers and one with two misses.
+    fn eval_results() -> Vec<EvalResult> {
+        let case1 = EvalResult {
+            input: "I was billed twice".to_string(),
+            expected: serde_json::from_str(r#"{"department": "billing", "needs_human": "yes"}"#)
+                .unwrap(),
+            answers: serde_json::from_str(
+                r#"{"department": {"choice": "billing"}, "needs_human": {"noul": 0.8}}"#,
+            )
+            .unwrap(),
+        };
+        let case2 = EvalResult {
+            input: "My router keeps dropping".to_string(),
+            expected: serde_json::from_str(r#"{"department": "technical", "severity": 4}"#)
+                .unwrap(),
+            answers: serde_json::from_str(
+                r#"{"department": {"choice": "sales"}, "severity": {"score": 5}}"#,
+            )
+            .unwrap(),
+        };
+        vec![case1, case2]
+    }
+
+    #[test]
+    fn render_eval_report_tallies_questions_and_misses() {
+        let report = render_eval_report(&eval_results(), false, ColorMode::off());
+        assert_eq!(
+            report,
+            "eval: 2 inputs, 4 answers\n  department    1/2  50.0%\n  needs_human   1/1  100.0%\n  severity      0/1  0.0%\nmisses:\n  [2] \"My router keeps dropping\"\n      department: expected technical, got sales\n      severity: expected 4, got 5\n"
+        );
+    }
+
+    #[test]
+    fn render_eval_report_says_all_match_when_no_miss() {
+        let results = vec![EvalResult {
+            input: "I was billed twice".to_string(),
+            expected: serde_json::from_str(r#"{"department": "billing"}"#).unwrap(),
+            answers: serde_json::from_str(r#"{"department": {"choice": "billing"}}"#).unwrap(),
+        }];
+        let report = render_eval_report(&results, false, ColorMode::off());
+        assert_eq!(
+            report,
+            "eval: 1 inputs, 1 answers\n  department    1/1  100.0%\nall answers match\n"
+        );
+    }
+
+    #[test]
+    fn render_eval_report_marks_missing_answers() {
+        let results = vec![EvalResult {
+            input: "hello".to_string(),
+            expected: serde_json::from_str(r#"{"a": "x"}"#).unwrap(),
+            answers: BTreeMap::new(),
+        }];
+        let report = render_eval_report(&results, false, ColorMode::off());
+        assert!(report.contains("a: expected x, got <missing>"));
+    }
+
+    #[test]
+    fn render_eval_report_json_shape() {
+        let report = render_eval_report(&eval_results(), true, ColorMode::off());
+        let value: Value = serde_json::from_str(&report).unwrap();
+        assert_eq!(value["inputs"], 2);
+        assert_eq!(value["answers"], 4);
+        assert_eq!(value["overall"]["correct"], 2);
+        assert_eq!(value["overall"]["total"], 4);
+        assert_eq!(value["overall"]["accuracy"], 0.5);
+        let questions: Vec<&Value> = value["questions"].as_array().unwrap().iter().collect();
+        assert_eq!(questions[0]["question"], "department");
+        assert_eq!(questions[0]["accuracy"], 0.5);
+        assert_eq!(questions[1]["question"], "needs_human");
+        assert_eq!(questions[1]["accuracy"], 1.0);
+        assert_eq!(value["misses"].as_array().unwrap().len(), 2);
+        assert_eq!(value["misses"][0]["question"], "department");
+        assert_eq!(value["misses"][0]["expected"], "technical");
+        assert_eq!(value["misses"][0]["got"], "sales");
+        assert_eq!(value["misses"][1]["question"], "severity");
+        assert_eq!(value["misses"][1]["expected"], "4");
+        assert_eq!(value["misses"][1]["got"], "5");
+    }
+
+    #[test]
+    fn render_eval_report_colors_the_accuracy() {
+        let report = render_eval_report(&eval_results(), false, ColorMode::on());
+        assert!(report.contains("\u{1b}[31m50.0%\u{1b}[0m"));
+        assert!(report.contains("\u{1b}[32m100.0%\u{1b}[0m"));
+        assert!(report.contains("\u{1b}[1mmisses:"));
     }
 }
