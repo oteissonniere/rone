@@ -1,0 +1,14 @@
+[
+  {
+    "input": "I was billed twice for the same invoice. Please refund the duplicate.",
+    "expected": { "department": "billing", "needs_human": "no" }
+  },
+  {
+    "input": "My router keeps dropping the connection every few hours.",
+    "expected": { "department": "technical", "needs_human": "yes" }
+  },
+  {
+    "input": "How can I upgrade my plan to the business tier?",
+    "expected": { "department": "sales", "needs_human": "no" }
+  }
+]

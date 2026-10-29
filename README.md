@@ -161,6 +161,11 @@ live endpoint):
 - **Batch mode**: `rone batch` runs the same preset over many inputs (one
   state per line, from `--file` or stdin); `--json` emits an array of
   `{"input", "answers"}` objects for scripts.
+- **Eval mode**: `rone eval` runs a preset over a labeled dataset (a JSON
+  array of `{"input", "expected"}` objects, from `--file` or stdin) and
+  reports per-question accuracy plus the list of misses, so you can check
+  how a preset/model pair behaves before relying on it; `--json` emits the
+  same report as a JSON object for scripts.
 - **Profiles**: a config file (`rone.toml`) defines named server/model
   profiles (`base_url`, `model`, `min_confidence`, `api_key`, `timeout`);
   pick one with `--profile` (or the `RONE_PROFILE` environment variable) or
@@ -180,7 +185,9 @@ live endpoint):
   `/v1/systemone`-compatible endpoint with deterministic answers (a pure
   function of the input), so the CLI can be exercised end to end without an
   inference server; the integration tests in `tests/` run against it.
-- **Examples**: sample tickets in `examples/tickets.txt` for batch mode.
+- **Examples**: sample tickets in `examples/tickets.txt` for batch mode,
+  and a sample labeled dataset in `examples/evals/triage.json` for eval
+  mode.
 - **Verified** against a live `/v1/systemone` endpoint (LM Studio).
 
 ## Roadmap
@@ -249,6 +256,10 @@ rone ask --preset triage --text "I was billed twice" --dry-run
 # many inputs at once: one state per line, from a file or stdin
 rone batch --preset triage --file examples/tickets.txt
 cat examples/tickets.txt | rone batch --preset triage --json
+
+# evaluate a preset over a labeled dataset (a JSON array of {"input", "expected"})
+rone eval --preset triage --file examples/evals/triage.json
+rone eval --preset triage --file examples/evals/triage.json --json
 ```
 
 ### Configuration file
@@ -350,6 +361,9 @@ rone ask --preset triage --text "I was billed twice" \
     --base-url http://127.0.0.1:8123/v1 --model mock
 
 rone batch --preset triage --file examples/tickets.txt \
+    --base-url http://127.0.0.1:8123/v1 --model mock
+
+rone eval --preset triage --file examples/evals/triage.json \
     --base-url http://127.0.0.1:8123/v1 --model mock
 ```
 
