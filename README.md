@@ -172,6 +172,10 @@ live endpoint):
   an array of `{profile, model, answers}` objects.
 - **MCP server mode**: `rone mcp` serves the presets as MCP tools over stdio
   (`list_presets`, `ask`, `batch`), so AI agents can call them.
+- **Model listing**: `rone models` queries the `/models` endpoint of the
+  selected profile (or `--base-url`) and lists the available models, one per
+  line (bold id, name and description when the server sends them); the
+  profile's `api_key` and `timeout` are honored.
 - **Mock server** (`src/bin/mock_server.rs`): a local
   `/v1/systemone`-compatible endpoint with deterministic answers (a pure
   function of the input), so the CLI can be exercised end to end without an
@@ -217,6 +221,9 @@ rone ask --preset triage,compliance --text "I was billed twice, please refund"
 
 # list the presets available in presets/
 rone list-presets
+
+# list the models served by a profile
+rone models --profile local
 
 # from a file or stdin, against a specific endpoint
 cat ticket.txt | rone ask --preset triage --base-url http://localhost:1234/v1
