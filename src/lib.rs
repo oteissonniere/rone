@@ -4,6 +4,23 @@
 //! extraction and rendering. The `rone` binary (`src/main.rs`) adds the
 //! command line and the network call on top.
 
+/// `GET /v1/models` response envelope (OpenAI-compatible, e.g. LM Studio).
+#[derive(Deserialize, Debug, PartialEq)]
+pub struct ModelList {
+    #[serde(default)]
+    pub data: Vec<ModelInfo>,
+}
+
+/// One model entry inside `GET /v1/models`.
+#[derive(Deserialize, Debug, PartialEq)]
+pub struct ModelInfo {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
@@ -377,6 +394,22 @@ pub fn format_duration(elapsed: Duration) -> String {
 /// Render a request latency as a display line: `elapsed: 842 ms`.
 pub fn render_latency(elapsed: Duration) -> String {
     format!("elapsed: {}", format_duration(elapsed))
+}
+
+/// Render the list of available models: one line per model, the display name
+/// (falling back to the model id) in bold, followed by the description when
+/// present.
+pub fn render_models(models: &[ModelInfo], colors: ColorMode) -> String {
+    let mut out = String::new();
+    for model in models {
+        let name = colors.bold(model.name.as_deref().unwrap_or(&model.id));
+        match model.description.as_deref() {
+            Some(description) => out.push_str(&format!("{name}: {description}")),
+            None => out.push_str(&name),
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// Render a batch of (input, answers, latency) triples: one numbered block
@@ -1004,5 +1037,46 @@ instructions = "A human must handle this."
             render_latency(Duration::from_millis(842)),
             "elapsed: 842 ms"
         );
+    }
+
+    #[test]
+    fn model_list_parses_openai_envelope() {
+        let raw = r#"{"object":"list","data":[
+            {"id":"mock","object":"model"},
+            {"id":"laya","name":"Laya 8B","description":"A decision model"}
+        ]}"#;
+        let list: ModelList = serde_json::from_str(raw).unwrap();
+        assert_eq!(list.data.len(), 2);
+        assert_eq!(list.data[1].name.as_deref(), Some("Laya 8B"));
+        assert_eq!(list.data[0].name, None);
+    }
+
+    #[test]
+    fn model_list_empty_data_is_valid() {
+        let list: ModelList = serde_json::from_str(r#"{"object":"list","data":[]}"#).unwrap();
+        assert!(list.data.is_empty());
+    }
+
+    #[test]
+    fn render_models_one_line_per_model() {
+        let models = vec![
+            ModelInfo {
+                id: "mock".into(),
+                name: None,
+                description: None,
+            },
+            ModelInfo {
+                id: "laya".into(),
+                name: Some("Laya 8B".into()),
+                description: Some("A decision model".into()),
+            },
+        ];
+        assert_eq!(
+            render_models(&models, ColorMode::off()),
+            "mock\nLaya 8B: A decision model\n"
+        );
+        let colored = render_models(&models, ColorMode::on());
+        assert!(colored.contains("A decision model\n"));
+        assert_ne!(colored, render_models(&models, ColorMode::off()));
     }
 }
