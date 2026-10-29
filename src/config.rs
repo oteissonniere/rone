@@ -8,6 +8,7 @@
 //! No HTTP, no CLI: just data structures and file discovery.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -182,6 +183,23 @@ pub fn render_profiles(config: &Config, colors: ColorMode) -> String {
     out
 }
 
+/// The user config home: `$XDG_CONFIG_HOME` when set and non-empty,
+/// otherwise `~/.config`.
+pub fn config_home() -> Option<PathBuf> {
+    config_home_from(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// The rule of [`config_home`], split out for testing.
+fn config_home_from(xdg: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
+    if let Some(x) = xdg.filter(|x| !x.is_empty()) {
+        return Some(PathBuf::from(x));
+    }
+    home.map(|h| PathBuf::from(h).join(".config"))
+}
+
 /// Candidate config file locations, in order of precedence.
 pub fn config_candidates(explicit: Option<&Path>) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
@@ -194,13 +212,9 @@ pub fn config_candidates(explicit: Option<&Path>) -> Vec<PathBuf> {
         candidates.push(PathBuf::from(env));
     }
     candidates.push(PathBuf::from("rone.toml"));
-    let home_config = match std::env::var_os("XDG_CONFIG_HOME") {
-        Some(xdg) if !xdg.is_empty() => PathBuf::from(xdg),
-        _ => std::env::var_os("HOME")
-            .map(|h| PathBuf::from(h).join(".config"))
-            .unwrap_or_else(|| PathBuf::from(".")),
-    };
-    candidates.push(home_config.join("rone/rone.toml"));
+    if let Some(home_config) = config_home() {
+        candidates.push(home_config.join("rone/rone.toml"));
+    }
     candidates
 }
 
@@ -503,5 +517,34 @@ api_key = "sk-literal"
     fn render_profiles_colored_mode_paints_ansi() {
         let cfg = Config::parse("default_profile = \"a\"\n[profiles.a]").unwrap();
         assert!(render_profiles(&cfg, ColorMode::on()).contains('\u{1b}'));
+    }
+
+    #[test]
+    fn config_home_prefers_the_xdg_location() {
+        assert_eq!(
+            config_home_from(Some(OsString::from("/cfg")), Some(OsString::from("/home"))),
+            Some(PathBuf::from("/cfg"))
+        );
+    }
+
+    #[test]
+    fn config_home_ignores_an_empty_xdg_location() {
+        assert_eq!(
+            config_home_from(Some(OsString::from("")), Some(OsString::from("/home"))),
+            Some(PathBuf::from("/home/.config"))
+        );
+    }
+
+    #[test]
+    fn config_home_falls_back_to_the_home_dot_config() {
+        assert_eq!(
+            config_home_from(None, Some(OsString::from("/home"))),
+            Some(PathBuf::from("/home/.config"))
+        );
+    }
+
+    #[test]
+    fn config_home_is_none_without_any_location() {
+        assert_eq!(config_home_from(None, None), None);
     }
 }

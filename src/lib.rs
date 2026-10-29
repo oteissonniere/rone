@@ -73,30 +73,53 @@ impl QuestionType {
     }
 }
 
-/// Resolve the presets directory: `presets/` in the current working
-/// directory, falling back to `presets/` next to the running executable so
-/// that an installed binary finds its presets without a copy in the CWD.
-pub fn presets_dir() -> PathBuf {
-    let next_to_exe = std::env::current_exe()
+/// The preset search chain, in order of precedence: `presets/` in the
+/// working directory, the user config directory `<config_home>/rone/presets`,
+/// and `presets/` next to the running executable. Existing directories
+/// only, in this order.
+pub fn preset_dirs() -> Vec<PathBuf> {
+    let user = config::config_home().map(|home| home.join("rone/presets"));
+    let exe = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join("presets")));
-    presets_dir_from(Path::new("presets"), next_to_exe)
+    preset_dirs_from(Path::new("presets"), user, exe)
 }
 
-/// The resolution rule of [`presets_dir`], split out for testing.
-fn presets_dir_from(cwd: &Path, next_to_exe: Option<PathBuf>) -> PathBuf {
-    if cwd.is_dir() {
-        return cwd.to_path_buf();
+/// The chain rule of [`preset_dirs`], split out for testing.
+fn preset_dirs_from(cwd: &Path, user: Option<PathBuf>, exe: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for dir in [Some(cwd.to_path_buf()), user, exe]
+        .into_iter()
+        .flatten()
+        .filter(|dir| dir.is_dir())
+    {
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
     }
-    if let Some(exe) = next_to_exe.filter(|exe| exe.is_dir()) {
-        return exe;
-    }
-    cwd.to_path_buf()
+    dirs
 }
 
-/// Load a preset from `presets/<name>.toml`.
+/// Load a preset from `<dir>/<name>.toml`, the first file found in the
+/// preset search chain ([`preset_dirs`]).
 pub fn load_preset(name: &str) -> Result<Preset> {
-    let path = presets_dir().join(format!("{name}.toml"));
+    let dirs = preset_dirs();
+    let path = dirs
+        .iter()
+        .map(|dir| dir.join(format!("{name}.toml")))
+        .find(|path| path.is_file())
+        .with_context(|| {
+            let searched = dirs
+                .iter()
+                .map(|dir| dir.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if searched.is_empty() {
+                format!("preset '{name}' not found (no presets/ directory found)")
+            } else {
+                format!("preset '{name}' not found (searched: {searched})")
+            }
+        })?;
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read preset file {}", path.display()))?;
     let preset =
@@ -137,19 +160,25 @@ pub fn load_presets(names: &[String]) -> Result<Preset> {
     Ok(merged)
 }
 
-/// List the names of the presets available in `presets/` (sorted).
+/// List the names of the presets available in the preset search chain
+/// ([`preset_dirs`]), sorted, duplicates removed.
 pub fn list_presets() -> Result<Vec<String>> {
     let mut names = Vec::new();
-    let entries = std::fs::read_dir(presets_dir())
-        .with_context(|| "failed to read the presets/ directory")?;
-    for entry in entries {
-        let entry = entry?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|os| anyhow::anyhow!("preset file name is not valid UTF-8: {os:?}"))?;
-        if let Some(stem) = name.strip_suffix(".toml") {
-            names.push(stem.to_string());
+    for dir in preset_dirs() {
+        let entries = std::fs::read_dir(&dir)
+            .with_context(|| format!("failed to read the {} directory", dir.display()))?;
+        for entry in entries {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|os| anyhow::anyhow!("preset file name is not valid UTF-8: {os:?}"))?;
+            if let Some(stem) = name.strip_suffix(".toml") {
+                let stem = stem.to_string();
+                if !names.contains(&stem) {
+                    names.push(stem);
+                }
+            }
         }
     }
     names.sort();
@@ -187,7 +216,7 @@ pub fn load_eval_cases(path: &Path) -> Result<Vec<EvalCase>> {
 /// Render a list of preset names as a human-friendly listing, with a header
 /// hinting at the `--preset` flag.
 pub fn render_presets(names: &[String], colors: ColorMode) -> String {
-    let mut out = String::from("Presets in presets/ (use --preset <name>):\n");
+    let mut out = String::from("Presets (use --preset <name>):\n");
     for name in names {
         out.push_str(&format!("  {}\n", colors.bold(name)));
     }
@@ -787,25 +816,52 @@ instructions = "A human must handle this."
     }
 
     #[test]
-    fn presets_dir_prefers_the_working_directory() {
-        let resolved = presets_dir_from(Path::new("presets"), Some(PathBuf::from("/nope/presets")));
-        assert_eq!(resolved, PathBuf::from("presets"));
-    }
-
-    #[test]
-    fn presets_dir_falls_back_next_to_the_executable() {
-        let tmp = std::env::temp_dir().join(format!("rone-presets-test-{}", std::process::id()));
-        let presets = tmp.join("presets");
-        std::fs::create_dir_all(&presets).unwrap();
-        let resolved = presets_dir_from(Path::new("no-such-presets-dir"), Some(presets.clone()));
+    fn preset_dirs_follows_the_precedence_order() {
+        let tmp =
+            std::env::temp_dir().join(format!("rone-preset-dirs-order-{}", std::process::id()));
+        let cwd = tmp.join("cwd/presets");
+        let user = tmp.join("user/rone/presets");
+        let exe = tmp.join("exe/presets");
+        for dir in [&cwd, &user, &exe] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let resolved = preset_dirs_from(&cwd, Some(user.clone()), Some(exe.clone()));
         let _ = std::fs::remove_dir_all(&tmp);
-        assert_eq!(resolved, presets);
+        assert_eq!(resolved, vec![cwd, user, exe]);
     }
 
     #[test]
-    fn presets_dir_keeps_the_cwd_path_when_nothing_exists() {
-        let resolved = presets_dir_from(Path::new("no-such-presets-dir"), None);
-        assert_eq!(resolved, PathBuf::from("no-such-presets-dir"));
+    fn preset_dirs_skips_missing_dirs() {
+        let tmp =
+            std::env::temp_dir().join(format!("rone-preset-dirs-skip-{}", std::process::id()));
+        let user = tmp.join("user/rone/presets");
+        std::fs::create_dir_all(&user).unwrap();
+        let resolved = preset_dirs_from(
+            &tmp.join("missing/presets"),
+            Some(user.clone()),
+            Some(tmp.join("missing/exe/presets")),
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(resolved, vec![user]);
+    }
+
+    #[test]
+    fn preset_dirs_deduplicates_identical_dirs() {
+        let tmp =
+            std::env::temp_dir().join(format!("rone-preset-dirs-dedup-{}", std::process::id()));
+        let dir = tmp.join("presets");
+        std::fs::create_dir_all(&dir).unwrap();
+        let resolved = preset_dirs_from(&dir, Some(dir.clone()), Some(dir.clone()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(resolved, vec![dir]);
+    }
+
+    #[test]
+    fn preset_dirs_is_empty_when_nothing_exists() {
+        let tmp =
+            std::env::temp_dir().join(format!("rone-preset-dirs-empty-{}", std::process::id()));
+        let resolved = preset_dirs_from(&tmp.join("presets"), None, None);
+        assert_eq!(resolved, Vec::<PathBuf>::new());
     }
 
     #[test]
@@ -843,14 +899,14 @@ instructions = "A human must handle this."
         let out = render_presets(&names, ColorMode::off());
         assert_eq!(
             out,
-            "Presets in presets/ (use --preset <name>):\n  triage\n  severity\n"
+            "Presets (use --preset <name>):\n  triage\n  severity\n"
         );
     }
 
     #[test]
     fn render_presets_empty_list_is_header_only() {
         let out = render_presets(&[], ColorMode::off());
-        assert_eq!(out, "Presets in presets/ (use --preset <name>):\n");
+        assert_eq!(out, "Presets (use --preset <name>):\n");
     }
 
     #[test]

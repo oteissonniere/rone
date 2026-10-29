@@ -15,7 +15,7 @@ use rone::config::{
 use rone::{
     EvalResult, ModelList, below_threshold, build_request, extract_answers, format_duration,
     list_presets, load_eval_cases, load_preset, load_presets, parse_eval_cases, parse_vars,
-    presets_dir, read_state, read_states, render_answers, render_batch, render_comparison,
+    preset_dirs, read_state, read_states, render_answers, render_batch, render_comparison,
     render_eval_report, render_latency, render_models, render_presets, validate,
 };
 
@@ -557,14 +557,15 @@ async fn main() -> Result<()> {
             println!("{}", render_eval_report(&results, json, colors));
         }
         Command::ListPresets => {
-            if !presets_dir().is_dir() {
+            if preset_dirs().is_empty() {
                 eprintln!(
-                    "no presets/ directory found (current directory or next to the executable)"
+                    "no presets/ directory found (looked in the working directory, \
+                     the user config directory and next to the executable)"
                 );
             } else {
                 let names = list_presets()?;
                 if names.is_empty() {
-                    eprintln!("no presets found in presets/");
+                    eprintln!("no presets found in the presets/ directories");
                 } else {
                     println!("{}", render_presets(&names, colors));
                 }
