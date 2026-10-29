@@ -128,7 +128,9 @@ live endpoint):
   (see `presets/triage.toml`, `presets/severity.toml`,
   `presets/escalation.toml`, `presets/intent.toml`,
   `presets/sentiment.toml` and `presets/compliance.toml`);
-  `rone list-presets` shows the presets of the current `presets/` directory.
+  `rone list-presets` shows the available presets. Presets resolve from the
+  `presets/` directory of the working directory, falling back to `presets/`
+  next to the `rone` executable (so an installed binary finds its presets).
 - **Composable presets**: `--preset a,b` (in `ask`) merges the questions of
   several presets into one `/v1/systemone` request. A question id defined in
   several presets is accepted only when the definitions are identical (the
@@ -340,7 +342,8 @@ Client configuration (Claude Desktop, Cursor, or any MCP client):
 ```
 
 Presets resolve from the `presets/` directory of the working directory the
-server is started in.
+server is started in, falling back to `presets/` next to the `rone`
+executable (so an installed binary finds its presets).
 
 ### Mock server
 

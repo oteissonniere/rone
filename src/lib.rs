@@ -73,9 +73,30 @@ impl QuestionType {
     }
 }
 
+/// Resolve the presets directory: `presets/` in the current working
+/// directory, falling back to `presets/` next to the running executable so
+/// that an installed binary finds its presets without a copy in the CWD.
+pub fn presets_dir() -> PathBuf {
+    let next_to_exe = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("presets")));
+    presets_dir_from(Path::new("presets"), next_to_exe)
+}
+
+/// The resolution rule of [`presets_dir`], split out for testing.
+fn presets_dir_from(cwd: &Path, next_to_exe: Option<PathBuf>) -> PathBuf {
+    if cwd.is_dir() {
+        return cwd.to_path_buf();
+    }
+    if let Some(exe) = next_to_exe.filter(|exe| exe.is_dir()) {
+        return exe;
+    }
+    cwd.to_path_buf()
+}
+
 /// Load a preset from `presets/<name>.toml`.
 pub fn load_preset(name: &str) -> Result<Preset> {
-    let path = PathBuf::from("presets").join(format!("{name}.toml"));
+    let path = presets_dir().join(format!("{name}.toml"));
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read preset file {}", path.display()))?;
     let preset =
@@ -119,8 +140,8 @@ pub fn load_presets(names: &[String]) -> Result<Preset> {
 /// List the names of the presets available in `presets/` (sorted).
 pub fn list_presets() -> Result<Vec<String>> {
     let mut names = Vec::new();
-    let entries =
-        std::fs::read_dir("presets").with_context(|| "failed to read the presets/ directory")?;
+    let entries = std::fs::read_dir(presets_dir())
+        .with_context(|| "failed to read the presets/ directory")?;
     for entry in entries {
         let entry = entry?;
         let name = entry
@@ -763,6 +784,28 @@ instructions = "A human must handle this."
     fn list_presets_finds_the_repo_presets() {
         let names = list_presets().unwrap();
         assert!(names.contains(&"triage".to_string()));
+    }
+
+    #[test]
+    fn presets_dir_prefers_the_working_directory() {
+        let resolved = presets_dir_from(Path::new("presets"), Some(PathBuf::from("/nope/presets")));
+        assert_eq!(resolved, PathBuf::from("presets"));
+    }
+
+    #[test]
+    fn presets_dir_falls_back_next_to_the_executable() {
+        let tmp = std::env::temp_dir().join(format!("rone-presets-test-{}", std::process::id()));
+        let presets = tmp.join("presets");
+        std::fs::create_dir_all(&presets).unwrap();
+        let resolved = presets_dir_from(Path::new("no-such-presets-dir"), Some(presets.clone()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(resolved, presets);
+    }
+
+    #[test]
+    fn presets_dir_keeps_the_cwd_path_when_nothing_exists() {
+        let resolved = presets_dir_from(Path::new("no-such-presets-dir"), None);
+        assert_eq!(resolved, PathBuf::from("no-such-presets-dir"));
     }
 
     #[test]

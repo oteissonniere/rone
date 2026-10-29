@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -15,8 +15,8 @@ use rone::config::{
 use rone::{
     EvalResult, ModelList, below_threshold, build_request, extract_answers, format_duration,
     list_presets, load_eval_cases, load_preset, load_presets, parse_eval_cases, parse_vars,
-    read_state, read_states, render_answers, render_batch, render_comparison, render_eval_report,
-    render_latency, render_models, render_presets, validate,
+    presets_dir, read_state, read_states, render_answers, render_batch, render_comparison,
+    render_eval_report, render_latency, render_models, render_presets, validate,
 };
 
 mod mcp;
@@ -557,8 +557,10 @@ async fn main() -> Result<()> {
             println!("{}", render_eval_report(&results, json, colors));
         }
         Command::ListPresets => {
-            if !Path::new("presets").is_dir() {
-                eprintln!("no presets/ directory found in the current directory");
+            if !presets_dir().is_dir() {
+                eprintln!(
+                    "no presets/ directory found (current directory or next to the executable)"
+                );
             } else {
                 let names = list_presets()?;
                 if names.is_empty() {
