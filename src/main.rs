@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -13,9 +13,10 @@ use rone::config::{
     resolve_api_key,
 };
 use rone::{
-    ModelList, below_threshold, build_request, extract_answers, format_duration, list_presets,
-    load_preset, load_presets, parse_vars, read_state, read_states, render_answers, render_batch,
-    render_comparison, render_latency, render_models, render_presets, validate,
+    EvalResult, ModelList, below_threshold, build_request, extract_answers, format_duration,
+    list_presets, load_eval_cases, load_preset, load_presets, parse_eval_cases, parse_vars,
+    read_state, read_states, render_answers, render_batch, render_comparison, render_eval_report,
+    render_latency, render_models, render_presets, validate,
 };
 
 mod mcp;
@@ -120,6 +121,45 @@ enum Command {
         /// Only accept answers with at least this much confidence (0..=1)
         #[arg(long, value_parser = parse_confidence, value_name = "F")]
         min_confidence: Option<f64>,
+
+        /// API key sent as a Bearer token (overrides the profile; `env:VAR` reads from the environment)
+        #[arg(long, value_name = "KEY")]
+        api_key: Option<String>,
+
+        /// Request timeout in seconds (overrides the profile)
+        #[arg(long, value_name = "SECONDS")]
+        timeout: Option<u64>,
+
+        /// Variable injected into question instructions as `{{name}}` (repeatable)
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        vars: Vec<String>,
+    },
+    /// Evaluate a preset over a dataset of expected answers (a JSON array of
+    /// {"input", "expected"} objects).
+    Eval {
+        /// Preset name, loaded from presets/<name>.toml
+        #[arg(long)]
+        preset: String,
+
+        /// Path to the eval dataset (a JSON array of {"input", "expected"} objects, or stdin)
+        #[arg(short, long, value_name = "PATH")]
+        file: Option<PathBuf>,
+
+        /// Profile from the config file (sets base_url, model, api_key, timeout)
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+
+        /// Base URL of the /v1/systemone-compatible endpoint (overrides the profile)
+        #[arg(long, value_name = "URL")]
+        base_url: Option<String>,
+
+        /// Model name sent in the request (overrides the profile)
+        #[arg(long, value_name = "NAME")]
+        model: Option<String>,
+
+        /// Output machine-readable JSON
+        #[arg(long)]
+        json: bool,
 
         /// API key sent as a Bearer token (overrides the profile; `env:VAR` reads from the environment)
         #[arg(long, value_name = "KEY")]
@@ -460,6 +500,61 @@ async fn main() -> Result<()> {
                 // confidence threshold.
                 std::process::exit(3);
             }
+        }
+        Command::Eval {
+            preset,
+            file,
+            profile,
+            base_url,
+            model,
+            json,
+            api_key,
+            timeout,
+            vars,
+        } => {
+            // The RONE_PROFILE environment variable is a fallback for
+            // --profile: an explicit flag always wins.
+            let profile = profile.or_else(profile_from_env);
+            let target = resolve_target(
+                config.as_ref(),
+                profile.as_deref(),
+                base_url.as_deref(),
+                model.as_deref(),
+                None,
+                api_key.as_deref(),
+                timeout,
+            )?;
+            let preset = load_preset(&preset)?;
+            validate(&preset)?;
+            let cases = match &file {
+                Some(f) => load_eval_cases(f)?,
+                None => {
+                    let mut buf = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut buf)
+                        .context("failed to read stdin")?;
+                    parse_eval_cases(&buf)?
+                }
+            };
+            let vars = parse_vars(&vars)?;
+            let mut results = Vec::new();
+            for case in &cases {
+                let request = build_request(&target.model, &case.input, &preset, &vars)?;
+                let response = send(
+                    &target.base_url,
+                    &request,
+                    target.api_key.as_deref(),
+                    target.timeout,
+                )
+                .await?;
+                let answers = extract_answers(&response);
+                results.push(EvalResult {
+                    input: case.input.clone(),
+                    expected: case.expected.clone(),
+                    answers,
+                });
+            }
+            println!("{}", render_eval_report(&results, json, colors));
         }
         Command::ListPresets => {
             if !Path::new("presets").is_dir() {
