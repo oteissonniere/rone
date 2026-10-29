@@ -358,6 +358,40 @@ pub fn below_threshold(answers: &BTreeMap<String, Value>, min: f64) -> Vec<(Stri
         .collect()
 }
 
+/// The value an answer carries as a comparable string: the picked option
+/// for `choice`, `"yes"`/`"no"` for `noul` (0.5 and up is "yes"), the
+/// score for `score`.
+pub fn answer_value(answer: &Value) -> Option<String> {
+    if let Some(choice) = answer.get("choice").and_then(Value::as_str) {
+        return Some(choice.to_string());
+    }
+    if let Some(p) = answer.get("noul").and_then(Value::as_f64) {
+        return Some(if p >= 0.5 { "yes".into() } else { "no".into() });
+    }
+    answer
+        .get("score")
+        .and_then(Value::as_u64)
+        .map(|s| s.to_string())
+}
+
+/// Whether the model's answer matches the expected value: an option name,
+/// `"yes"`/`"no"` for `noul`, or a number for `score`.
+pub fn answer_matches(answer: &Value, expected: &Value) -> bool {
+    match (answer_value(answer), expected_value(expected)) {
+        (Some(got), Some(want)) => got == want,
+        _ => false,
+    }
+}
+
+/// The expected value as a comparable string: a string as-is, a number as
+/// its decimal representation.
+fn expected_value(expected: &Value) -> Option<String> {
+    expected
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| expected.as_u64().map(|n| n.to_string()))
+}
+
 /// Render one set of answers as a readable table (optionally colored) or
 /// as JSON.
 pub fn render_answers(
@@ -1154,5 +1188,66 @@ instructions = "A human must handle this."
         let path = std::env::temp_dir().join("rone-eval-missing.json");
         let err = load_eval_cases(&path).unwrap_err();
         assert!(err.to_string().contains("failed to read eval dataset"));
+    }
+
+    #[test]
+    fn answer_value_choice_is_the_picked_option() {
+        let answer = json!({"type": "choice", "choice": "billing", "confidence": 0.9});
+        assert_eq!(answer_value(&answer), Some("billing".to_string()));
+    }
+
+    #[test]
+    fn answer_value_noul_is_yes_no_at_half() {
+        assert_eq!(
+            answer_value(&json!({"type": "noul", "noul": 0.76})),
+            Some("yes".to_string())
+        );
+        assert_eq!(
+            answer_value(&json!({"type": "noul", "noul": 0.5})),
+            Some("yes".to_string())
+        );
+        assert_eq!(
+            answer_value(&json!({"type": "noul", "noul": 0.49})),
+            Some("no".to_string())
+        );
+    }
+
+    #[test]
+    fn answer_value_score_is_the_number() {
+        let answer = json!({"type": "score", "score": 4});
+        assert_eq!(answer_value(&answer), Some("4".to_string()));
+    }
+
+    #[test]
+    fn answer_value_none_when_no_known_field() {
+        assert_eq!(answer_value(&json!({"type": "choice"})), None);
+    }
+
+    #[test]
+    fn answer_matches_choice_and_noul() {
+        assert!(answer_matches(
+            &json!({"choice": "billing"}),
+            &json!("billing")
+        ));
+        assert!(!answer_matches(
+            &json!({"choice": "billing"}),
+            &json!("sales")
+        ));
+        assert!(answer_matches(&json!({"noul": 0.8}), &json!("yes")));
+        assert!(!answer_matches(&json!({"noul": 0.2}), &json!("yes")));
+    }
+
+    #[test]
+    fn answer_matches_score_as_number() {
+        assert!(answer_matches(&json!({"score": 4}), &json!(4)));
+        assert!(!answer_matches(&json!({"score": 4}), &json!(3)));
+    }
+
+    #[test]
+    fn answer_matches_false_when_answer_has_no_value() {
+        assert!(!answer_matches(
+            &json!({"type": "choice"}),
+            &json!("billing")
+        ));
     }
 }
