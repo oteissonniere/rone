@@ -494,7 +494,7 @@ async fn main() -> Result<()> {
                 None,
                 None,
             )?;
-            let url = format!("{}/v1/models", target.base_url.trim_end_matches('/'));
+            let url = format!("{}/models", target.base_url.trim_end_matches('/'));
             let list: ModelList = get_json(&url, target.api_key.as_deref(), target.timeout).await?;
             println!("{}", render_models(&list.data, colors));
         }

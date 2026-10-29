@@ -549,3 +549,22 @@ fn ask_comparison_json_is_array_with_profile_and_model() {
     assert_eq!(arr[1]["answers"]["department"]["choice"], "sales");
     drop(server);
 }
+
+#[test]
+fn models_lists_the_available_models() {
+    let (url, server) = start_mock_server();
+    let config = empty_config();
+
+    let (code, stdout, stderr) = run_rone(&[
+        "--config",
+        config.to_str().unwrap(),
+        "models",
+        "--base-url",
+        &url,
+    ]);
+
+    assert_eq!(code, 0, "stderr: {stderr}");
+    // The mock advertises a single model, `mock`.
+    assert!(stdout.contains("mock"), "stdout: {stdout}");
+    drop(server);
+}
