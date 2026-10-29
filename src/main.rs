@@ -13,9 +13,9 @@ use rone::config::{
     resolve_api_key,
 };
 use rone::{
-    below_threshold, build_request, extract_answers, format_duration, list_presets, load_preset,
-    load_presets, parse_vars, read_state, read_states, render_answers, render_batch,
-    render_comparison, render_latency, render_presets, validate,
+    ModelList, below_threshold, build_request, extract_answers, format_duration, list_presets,
+    load_preset, load_presets, parse_vars, read_state, read_states, render_answers, render_batch,
+    render_comparison, render_latency, render_models, render_presets, validate,
 };
 
 mod mcp;
@@ -139,6 +139,12 @@ enum Command {
     ListProfiles,
     /// Run rone as an MCP (Model Context Protocol) server over stdio.
     Mcp,
+    /// List the models available on the configured endpoint (GET /v1/models).
+    Models {
+        /// Profile from the config file (sets base_url, api_key, timeout)
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+    },
 }
 
 /// Parse a confidence threshold between 0 and 1 (clap value parser).
@@ -228,6 +234,27 @@ async fn send(
         bail!("server returned {status}: {body}");
     }
     Ok(body)
+}
+
+/// GET a JSON document, adding a Bearer header when an API key is set.
+async fn get_json<T: serde::de::DeserializeOwned>(
+    url: &str,
+    api_key: Option<&str>,
+    timeout: Option<u64>,
+) -> Result<T> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout.unwrap_or(30)))
+        .build()?;
+    let mut request = client.get(url);
+    if let Some(key) = api_key.filter(|key| !key.is_empty()) {
+        request = request.bearer_auth(key);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        bail!("server returned {status}");
+    }
+    Ok(response.json().await?)
 }
 
 #[tokio::main]
@@ -452,6 +479,21 @@ async fn main() -> Result<()> {
             ),
         },
         Command::Mcp => mcp::run().await?,
+        Command::Models { profile } => {
+            let profile = profile.or_else(profile_from_env);
+            let target = resolve_target(
+                config.as_ref(),
+                profile.as_deref(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )?;
+            let url = format!("{}/v1/models", target.base_url.trim_end_matches('/'));
+            let list: ModelList = get_json(&url, target.api_key.as_deref(), target.timeout).await?;
+            println!("{}", render_models(&list.data, colors));
+        }
     }
     Ok(())
 }
