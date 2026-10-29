@@ -23,7 +23,7 @@ pub struct ModelInfo {
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -133,6 +133,34 @@ pub fn list_presets() -> Result<Vec<String>> {
     }
     names.sort();
     Ok(names)
+}
+
+/// One labeled evaluation case: an input text and the expected answer for
+/// each question — a choice option name, `"yes"`/`"no"` for `noul`, a
+/// number for `score`.
+#[derive(Deserialize, Debug, PartialEq)]
+pub struct EvalCase {
+    pub input: String,
+    #[serde(default)]
+    pub expected: BTreeMap<String, Value>,
+}
+
+/// Parse an eval dataset: a JSON array of `{input, expected}` objects.
+pub fn parse_eval_cases(content: &str) -> Result<Vec<EvalCase>> {
+    let cases: Vec<EvalCase> = serde_json::from_str(content).context(
+        "failed to parse the eval dataset: expected a JSON array of {input, expected} objects",
+    )?;
+    if cases.is_empty() {
+        bail!("the eval dataset contains no cases");
+    }
+    Ok(cases)
+}
+
+/// Load an eval dataset from a file.
+pub fn load_eval_cases(path: &Path) -> Result<Vec<EvalCase>> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read eval dataset {}", path.display()))?;
+    parse_eval_cases(&content).with_context(|| format!("in eval dataset {}", path.display()))
 }
 
 /// Render a list of preset names as a human-friendly listing, with a header
@@ -1078,5 +1106,53 @@ instructions = "A human must handle this."
         let colored = render_models(&models, ColorMode::on());
         assert!(colored.contains("A decision model\n"));
         assert_ne!(colored, render_models(&models, ColorMode::off()));
+    }
+
+    #[test]
+    fn parse_eval_cases_reads_input_and_expected() {
+        let content = r#"[
+            { "input": "I was billed twice",
+              "expected": { "department": "billing", "needs_human": "yes" } },
+            { "input": "The login page is down",
+              "expected": { "department": "technical", "severity": 4 } }
+        ]"#;
+        let cases = parse_eval_cases(content).unwrap();
+        assert_eq!(cases.len(), 2);
+        assert_eq!(cases[0].input, "I was billed twice");
+        assert_eq!(cases[0].expected["department"], "billing");
+        assert_eq!(cases[0].expected["needs_human"], "yes");
+        assert_eq!(cases[1].expected["severity"], 4);
+    }
+
+    #[test]
+    fn parse_eval_cases_empty_expected_is_fine() {
+        let cases = parse_eval_cases(r#"[{ "input": "hello" }]"#).unwrap();
+        assert!(cases[0].expected.is_empty());
+    }
+
+    #[test]
+    fn parse_eval_cases_rejects_empty_array() {
+        assert!(parse_eval_cases("[]").is_err());
+    }
+
+    #[test]
+    fn parse_eval_cases_rejects_invalid_json() {
+        assert!(parse_eval_cases("{ not json").is_err());
+    }
+
+    #[test]
+    fn load_eval_cases_reads_a_file() {
+        let path = std::env::temp_dir().join(format!("rone-eval-{}.json", std::process::id()));
+        std::fs::write(&path, r#"[{ "input": "hello", "expected": { "a": "x" } }]"#).unwrap();
+        let cases = load_eval_cases(&path).unwrap();
+        assert_eq!(cases[0].input, "hello");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_eval_cases_reports_missing_file() {
+        let path = std::env::temp_dir().join("rone-eval-missing.json");
+        let err = load_eval_cases(&path).unwrap_err();
+        assert!(err.to_string().contains("failed to read eval dataset"));
     }
 }
