@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/release.sh` builds and packages a distributable tarball in
+  `dist/` (binary + presets + README/LICENSE/CHANGELOG) with a SHA-256
+  sidecar for download verification.
+
 ## [0.1.0] - 2026-07-14
 
 ### Added

@@ -400,6 +400,25 @@ request and the result easy for humans to work with.
 - Support for the `/v1/systemone` endpoint depends on your inference server and
   model format. Check your server's documentation.
 
+## Releasing
+
+`scripts/release.sh` builds the release binary and packages it with its
+presets and docs into a self-contained tarball:
+
+```bash
+./scripts/release.sh                                  # for this machine's architecture
+./scripts/release.sh x86_64-unknown-linux-gnu        # or an explicit target triple
+```
+
+It writes `dist/rone-v<version>-<target>.tar.gz` (extract to any directory,
+run `rone/` — the presets bundled next to it are picked up automatically) and a
+`.sha256` sidecar:
+
+```bash
+cd dist && shasum -a 256 -c rone-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
+# (or sha256sum -c on Linux)
+```
+
 ## Contributing
 
 Ideas, issues and pull requests are welcome.
