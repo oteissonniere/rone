@@ -12,7 +12,9 @@ categories = ["command-line-utilities"]
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json"] }
+# `rustls-tls` keeps the build free of system OpenSSL so every target
+# (macOS/Linux, native or cross-compiled) builds identically in CI.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps JSON objects in insertion order, so the mock server
 # sees question options in the order the client sent them.
