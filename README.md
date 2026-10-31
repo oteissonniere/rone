@@ -419,6 +419,11 @@ cd dist && shasum -a 256 -c rone-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
 # (or sha256sum -c on Linux)
 ```
 
+On GitHub, pushing a tag matching the Cargo.toml version (`git push origin
+v0.1.0`) triggers `.github/workflows/release.yml`, which builds every
+supported target — macOS arm64/x86_64 and Linux x86_64/arm64 — and publishes
+a GitHub Release with each tarball plus its `.sha256` sidecar as assets.
+
 ## Contributing
 
 Ideas, issues and pull requests are welcome.

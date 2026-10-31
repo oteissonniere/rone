@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/release.sh` builds and packages a distributable tarball in
   `dist/` (binary + presets + README/LICENSE/CHANGELOG) with a SHA-256
   sidecar for download verification.
+- GitHub Actions workflow that, on a `v*` tag matching the Cargo.toml
+  version, builds macOS arm64/x86_64 and Linux x86_64/arm64 and publishes a
+  GitHub Release with each tarball and `.sha256` sidecar as assets.
 
 ## [0.1.0] - 2026-07-14
 
