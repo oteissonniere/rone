@@ -22,6 +22,23 @@ only have to provide what actually changes: the input and a few parameters.
 
 ## Installation
 
+### From a GitHub release (macOS / Linux)
+
+One-liner, no build tools required. The installer detects your platform
+(arm64/x86_64), downloads the latest release tarball, verifies its SHA-256
+checksum and installs it into `~/.local/share/rone/<version>/` with a symlink
+in `~/.local/bin`. The six bundled presets are installed next to the binary.
+The repository must be public on GitHub for this to work:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh
+```
+
+Optional arguments (passed after `-s --`): pin a version instead of latest,
+or dry-run the whole thing offline to see what it would do.
+
+### From source
+
 Rone is a single binary built with Rust. From a checkout of this repo:
 
 ```bash
@@ -198,7 +215,7 @@ live endpoint):
 
 - Set up the GitHub repository and publish on crates.io
 - More presets for common use cases (sentiment, compliance, ...)
-- Packaging (install script, Homebrew tap)
+- Packaging (Homebrew tap)
 - First-class example of a multi-question preset with `--var` variables
 
 ## Draft interface
