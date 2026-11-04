@@ -465,8 +465,8 @@ api_key = "sk-literal"
     #[test]
     fn profile_from_env_reads_rone_profile() {
         let _env = ENV_MUTEX.lock().unwrap();
-        unsafe { std::env::set_var("RONE_PROFILE", "mini-ai") };
-        assert_eq!(profile_from_env().as_deref(), Some("mini-ai"));
+        unsafe { std::env::set_var("RONE_PROFILE", "alpha") };
+        assert_eq!(profile_from_env().as_deref(), Some("alpha"));
         unsafe { std::env::remove_var("RONE_PROFILE") };
     }
 
@@ -498,7 +498,7 @@ api_key = "sk-literal"
 
     #[test]
     fn parse_profiles_single_name() {
-        assert_eq!(parse_profiles("mini-ai"), vec!["mini-ai".to_string()]);
+        assert_eq!(parse_profiles("alpha"), vec!["alpha".to_string()]);
     }
 
     #[test]

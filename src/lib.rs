@@ -1285,21 +1285,21 @@ instructions = "A human must handle this."
         }));
         let results = vec![
             (
-                "macbookpro".to_string(),
+                "laptop-a".to_string(),
                 "laya".to_string(),
                 answers.clone(),
                 Duration::from_millis(842),
             ),
             (
-                "mini-ai".to_string(),
+                "gpu-b".to_string(),
                 "laya".to_string(),
                 answers,
                 Duration::from_millis(900),
             ),
         ];
         let out = render_comparison(&results, false, ColorMode::off());
-        assert!(out.contains("--- macbookpro (laya) ---"));
-        assert!(out.contains("--- mini-ai (laya) ---"));
+        assert!(out.contains("--- laptop-a (laya) ---"));
+        assert!(out.contains("--- gpu-b (laya) ---"));
         // Each profile gets its own block of answers.
         assert_eq!(out.matches("*billing").count(), 2);
         // Each block carries its own latency line.
