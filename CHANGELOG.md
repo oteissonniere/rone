@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scripts/install.sh`: one-liner end-user installer (`curl -fsSL ... | sh`) that detects the platform, verifies the release tarball's SHA-256 checksum and installs into `~/.local/share/rone/<version>/` with a symlink in `~/.local/bin`; supports pinned versions and an offline `--dry-run`.
+- `scripts/install.sh`: one-liner end-user installer (`curl -fsSL ... | sh`) that detects the platform, verifies the release tarball's SHA-256 checksum and installs into `~/.local/share/rone/<version>/` with a symlink in `~/.local/bin`; supports pinned versions, and a `--dry-run` preview that resolves the latest release online (fully offline with a pinned version).
 
 ### Fixed
 

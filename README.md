@@ -35,7 +35,8 @@ curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/ins
 ```
 
 Optional arguments (passed after `-s --`): pin a version instead of latest,
-or dry-run the whole thing offline to see what it would do.
+or dry-run to preview the plan — online, it resolves which release it would
+install; with a pinned version it works fully offline.
 
 ### From source
 

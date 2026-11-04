@@ -12,6 +12,7 @@
 #   install.sh [VERSION]     install a specific version, e.g. 0.1.0
 #                            (default: the latest GitHub Release)
 #   install.sh --dry-run     print what would be done without downloading
+#                            (resolves the latest release online when reachable)
 #
 # Environment overrides (for testing):
 #   RONE_REPO      owner/repo to fetch from (default: oteissonniere/rone)
@@ -27,7 +28,7 @@ for arg in "$@"; do
     case "$arg" in
         --dry-run) dry_run=1 ;;
         -h|--help)
-            sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) version="$arg" ;;
@@ -62,20 +63,27 @@ target=$(detect_target)
 [ "$target" != "unsupported" ] || die "unsupported platform: $(uname -s) $(uname -m)" \
     "(supported: macOS and Linux, arm64/x86_64)"
 
-fetch_latest_version() {
-    json=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest") \
-        || die "could not reach the GitHub API for ${REPO} (is it public?)"
+resolve_latest_version() {
+    json=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null) \
+        || return 1
     tag=$(printf '%s\n' "$json" \
         | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
         | head -n 1)
-    [ -n "$tag" ] || die "no release found for ${REPO}"
+    [ -n "$tag" ] || return 1
     printf '%s' "${tag#v}"
 }
 
-if [ "$dry_run" = 1 ] && [ -z "$version" ]; then
-    version="(latest, resolved at install time)"
-else
-    version="${version:-$(fetch_latest_version)}"
+if [ -z "$version" ]; then
+    version=$(resolve_latest_version) \
+        && : \
+        || {
+            if [ "$dry_run" = 1 ]; then
+                echo "note: latest release not resolved (offline?); pin a version for concrete URLs" >&2
+                version="(latest, resolved at install time)"
+            else
+                die "could not reach the GitHub API for ${REPO} (is it public?)"
+            fi
+        }
 fi
 
 stem="rone-v${version}-${target}"
