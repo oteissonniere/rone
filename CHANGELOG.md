@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scripts/install.sh`: one-liner end-user installer (`curl -fsSL ... | sh`) that detects the platform, verifies the release tarball's SHA-256 checksum and installs into `~/.local/share/rone/<version>/` with a symlink in `~/.local/bin`; supports pinned versions and an offline `--dry-run`.
 
+### Fixed
+
+- Presets bundled next to the binary are found again when `rone` is run through a symlink (e.g. the installer's `~/.local/bin/rone`): the executable path is now resolved before looking for `presets/`.
+
 ## [0.1.0] - 2026-07-14
 
 ### Added

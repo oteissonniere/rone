@@ -75,13 +75,16 @@ impl QuestionType {
 
 /// The preset search chain, in order of precedence: `presets/` in the
 /// working directory, the user config directory `<config_home>/rone/presets`,
-/// and `presets/` next to the running executable. Existing directories
-/// only, in this order.
+/// and `presets/` next to the running executable (symlinks are resolved, so a
+/// binary linked from e.g. `~/.local/bin` still finds the presets bundled with
+/// its real install location). Existing directories only, in this order.
 pub fn preset_dirs() -> Vec<PathBuf> {
     let user = config::config_home().map(|home| home.join("rone/presets"));
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("presets")));
+    let exe = std::env::current_exe().ok().and_then(|exe| {
+        // Resolve symlinks so the directory of the *real* binary is used.
+        let real = std::fs::canonicalize(&exe).unwrap_or(exe);
+        real.parent().map(|dir| dir.join("presets"))
+    });
     preset_dirs_from(Path::new("presets"), user, exe)
 }
 
