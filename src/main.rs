@@ -223,9 +223,15 @@ fn resolve_target(
     api_key: Option<&str>,
     timeout: Option<u64>,
 ) -> Result<Target> {
-    let profile = match config {
-        Some(cfg) => cfg.resolve_profile(profile)?,
-        None => Profile::default(),
+    let profile = match (config, profile) {
+        (Some(cfg), _) => cfg.resolve_profile(profile)?,
+        // Without a config file only the built-in default may apply; an
+        // explicitly requested profile is a clear error, not a silent fallback.
+        (None, Some(name)) => bail!(
+            "unknown profile '{name}': no rone.toml found (looked for \
+             $RONE_CONFIG, ./rone.toml and ~/.config/rone/rone.toml)"
+        ),
+        (None, None) => Profile::default(),
     };
     let api_key = match api_key {
         Some(k) => Some(k.to_string()),
@@ -335,6 +341,9 @@ async fn main() -> Result<()> {
             let comparing = profile_names.len() > 1;
             let names: Vec<Option<&str>> = if comparing {
                 profile_names.iter().map(String::as_str).map(Some).collect()
+            } else if let Some(name) = profile_names.first() {
+                // A single explicit --profile (or RONE_PROFILE): use it as-is.
+                vec![Some(name.as_str())]
             } else {
                 // None: the config's default profile (or built-in defaults).
                 vec![None]

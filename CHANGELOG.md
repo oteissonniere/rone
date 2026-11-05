@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `ask --profile <name>` (single profile, no comparison) is now actually used; it was silently ignored and the configured default profile — or the built-in localhost endpoint when there is no config file — was contacted instead.
+- Requesting a profile that no `rone.toml` defines now fails with a clear error naming the profile and explaining where to create it, instead of silently falling back to the built-in default endpoint.
+
 ## [0.1.1] - 2026-11-04
 
 ### Added
