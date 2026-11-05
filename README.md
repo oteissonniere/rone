@@ -22,25 +22,71 @@ only have to provide what actually changes: the input and a few parameters.
 
 ## Installation
 
-### From a GitHub release (macOS / Linux)
+### Supported platforms
 
-One-liner, no build tools required. The installer detects your platform
-(arm64/x86_64), downloads the latest release tarball, verifies its SHA-256
-checksum and installs it into `~/.local/share/rone/<version>/` with a symlink
-in `~/.local/bin`. The six bundled presets are installed next to the binary.
-The repository must be public on GitHub for this to work:
+Prebuilt binaries are published as GitHub release assets for four targets:
+
+| Platform | Target triple | Notes |
+|---|---|---|
+| macOS, Apple Silicon (arm64) | `aarch64-apple-darwin` | verified end-to-end with v0.1.2 |
+| macOS, Intel (x86_64) | `x86_64-apple-darwin` | built and published by the release CI |
+| Linux x86_64 (glibc) | `x86_64-unknown-linux-gnu` | any 64-bit glibc distro: Debian, Ubuntu, Fedora, RHEL, Arch, ... |
+| Linux ARM 64-bit (aarch64/arm64, glibc) | `aarch64-unknown-linux-gnu` | needs a 64-bit OS — verified on Raspberry Pi with the standard 64-bit image |
+
+Prebuilt binaries do not cover musl-based distros (Alpine), 32-bit systems
+or Windows. Building from source works anywhere Rust and its dependencies
+build; macOS and Linux are exercised in CI, other platforms are best-effort.
+
+### From a GitHub release (one-liner)
+
+The same command installs on every platform above — the script detects your
+system (`uname -s` / `uname -m`), downloads the matching tarball from the
+latest GitHub Release, verifies its SHA-256 checksum and installs it into
+`~/.local/share/rone/<version>/` with a symlink in `~/.local/bin`. The six
+bundled presets come along next to the binary. No root needed: everything
+stays inside your home directory. Requirements are `sh`, `curl`, `tar` and a
+SHA-256 tool (`sha256sum` on Linux, `shasum` on macOS), all present by
+default. The repository must be public on GitHub for this to work (the
+script reads it from raw.githubusercontent.com and downloads release assets
+unauthenticated):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh
 ```
 
-Optional arguments (passed after `-s --`): pin a version instead of latest,
-or dry-run to preview the plan — online, it resolves which release it would
-install; with a pinned version it works fully offline.
+macOS: the download goes through `curl`, so the binary is not flagged with
+Apple's "quarantine" attribute — no Gatekeeper approval step after
+installing. If `~/.local/bin` is not on your PATH (the installer tells you),
+add this to your shell rc:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Linux ARM: make sure the OS itself is 64-bit — `uname -m` must print
+`aarch64`. On a Raspberry Pi that means the standard 64-bit Raspberry Pi
+OS, not the legacy 32-bit one.
+
+Options — pin an exact version instead of latest, or preview without
+installing:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh -s -- 0.1.2       # install v0.1.2 exactly
+curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh -s -- --dry-run   # show what would be done, then exit
+```
+
+A `--dry-run` with a pinned version works fully offline (no GitHub API
+call); online it resolves which release it would install.
+
+New versions install side by side: each version has its own
+`~/.local/share/rone/v<version>/` directory and the `~/.local/bin/rone`
+symlink is repointed at the one you just installed. Older versions stay on
+disk until you remove them (see Uninstall).
 
 ### From source
 
-Rone is a single binary built with Rust. From a checkout of this repo:
+Rone is a single binary built with Rust (requires a Rust toolchain, e.g. via
+rustup). From a checkout of this repo:
 
 ```bash
 cargo install --path .     # installs rone (and mock_server) into ~/.cargo/bin
@@ -50,6 +96,26 @@ or build it in place:
 
 ```bash
 cargo build --release      # binary in target/release/rone
+```
+
+### Uninstall
+
+An installer-based install touches exactly two things — the version directory
+under `~/.local/share/rone/` and the symlink in `~/.local/bin`. Your config,
+API keys and personal presets in `~/.config/rone/` are untouched:
+
+```bash
+rm ~/.local/bin/rone                 # remove the symlink
+rm -rf ~/.local/share/rone/v0.1.2    # remove one version (adjust the name)
+# or everything installed by rone, including older versions:
+rm -rf ~/.local/share/rone
+```
+
+Remove `~/.config/rone/` as well if you no longer want your local config and
+personal presets. For a from-source install:
+
+```bash
+rm ~/.cargo/bin/rone ~/.cargo/bin/mock_server
 ```
 
 ## Background
@@ -345,10 +411,61 @@ See [`config.example.toml`](config.example.toml) for a full annotated example.
 
 ### MCP server
 
-`rone mcp` serves the presets as MCP tools over stdio, for AI agents that
-speak MCP. Tools: `list_presets`, `ask`, `batch`.
+`rone mcp` runs rone as a Model Context Protocol (MCP) server over stdio, so
+an AI agent that speaks MCP (Claude Desktop, Cursor, or any client able to
+launch and talk to a local process) can use your System One decision models:
+it discovers the available presets, asks one state through a preset, or
+batch-processes many — without you writing JSON requests by hand.
 
-Client configuration (Claude Desktop, Cursor, or any MCP client):
+How it works:
+
+- Transport is JSON-RPC 2.0 with one message per line on stdin/stdout; all
+  logging goes to stderr so it can never corrupt the protocol stream.
+- Supported protocol versions: `2025-06-18`, `2025-03-26` and `2024-11-05`.
+- A failed call does not crash the server: errors come back as a normal tool
+  result flagged with `isError: true` plus a readable message, so an agent can
+  react to them.
+
+Three tools are exposed:
+
+| Tool | Required arguments | Optional arguments |
+|---|---|---|
+| `list_presets` | — | — |
+| `ask` | `preset`, `state` (the input text to analyze) | `vars`, `min_confidence`, `model`, `base_url`, `json` |
+| `batch` | `preset`, `states` (an array of strings, or one state per line in a single string) | same as `ask` |
+
+Optional arguments:
+
+- `vars`: an object of strings substituted for the preset's `{{name}}`
+  placeholders.
+- `min_confidence` (0..1): when any answer falls below it, the call is
+  flagged `isError` and prefixed with a per-answer warning — the answers
+  themselves are still returned, so the agent can decide what to do with them.
+- `model` / `base_url`: override the model and endpoint for that call only.
+- `json: true`: machine-readable JSON instead of the rendered table.
+
+Endpoint selection in MCP mode differs from the CLI commands: `rone mcp` does
+not read your `rone.toml` profiles, so a tool call defaults to model `laya` at
+`http://localhost:1234/v1`. When your model lives elsewhere, pass it per call:
+
+```json
+{
+  "name": "ask",
+  "arguments": {
+    "preset": "triage",
+    "state": "I was billed twice",
+    "model": "laya",
+    "base_url": "http://inference.example.eu:1234/v1"
+  }
+}
+```
+
+(Note there is no `api_key` argument yet — an endpoint requiring a bearer
+token is not reachable from the MCP server as of today.)
+
+Client configuration (Claude Desktop, Cursor or any MCP client) — the server
+is a local command, so `command` must resolve to your installed binary; use
+the absolute path (`~/.local/bin/rone`) if it is not on the client's PATH:
 
 ```json
 {
@@ -364,7 +481,10 @@ Client configuration (Claude Desktop, Cursor, or any MCP client):
 Presets resolve from the preset search chain: the `presets/` directory of
 the working directory the server is started in, then the user config
 directory (`~/.config/rone/presets`), then `presets/` next to the `rone`
-executable (so an installed binary finds its presets).
+executable (so an installed binary always finds its bundled presets). Desktop
+clients usually start rone from an unknown working directory, so if you want
+your own presets served through MCP, put them in `~/.config/rone/presets/` —
+they will be found regardless of where the client launches the server.
 
 ### Mock server
 
