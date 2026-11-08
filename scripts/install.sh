@@ -1,7 +1,8 @@
 #!/bin/sh
 # rone end-user installer: download the latest release from GitHub, verify its
 # SHA-256 checksum and install it into ~/.local/share/rone/<version>/ with a
-# symlink in ~/.local/bin. Bundled presets come along next to the binary.
+# symlink in ~/.local/bin. Bundled presets come along next to the binary. Only
+# the installed version is kept: previously installed versions are removed.
 #
 #   curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh
 #
@@ -93,7 +94,8 @@ echo "installing ${BIN_NAME} v${version} for ${target}"
 if [ "$dry_run" = 1 ]; then
     echo "dry run: would download and verify"
     printf '  %s\n' "${base_url}/${stem}.tar.gz" "${base_url}/${stem}.tar.gz.sha256"
-    echo "then extract into ~/.local/share/${BIN_NAME}/v${version} and link ~/.local/bin/${BIN_NAME}"
+    echo "then extract into ~/.local/share/${BIN_NAME}/v${version}, link ~/.local/bin/${BIN_NAME}"
+    echo "and remove any previously installed version directories"
     exit 0
 fi
 
@@ -125,6 +127,14 @@ chmod +x "${install_dir}/${BIN_NAME}"
 link_dir="${HOME}/.local/bin"
 mkdir -p "$link_dir"
 ln -sf "${install_dir}/${BIN_NAME}" "${link_dir}/${BIN_NAME}"
+
+# Only the version just installed is kept: remove the previous ones.
+for old in "${HOME}"/.local/share/"${BIN_NAME}"/v*; do
+    [ -d "$old" ] || continue
+    [ "$old" = "$install_dir" ] && continue
+    printf 'removing previous version %s\n' "${old##*/}"
+    rm -rf "$old"
+done
 
 case ":${PATH}:" in
     *":${link_dir}:"*) ;;

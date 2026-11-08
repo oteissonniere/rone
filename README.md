@@ -78,10 +78,10 @@ curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/ins
 A `--dry-run` with a pinned version works fully offline (no GitHub API
 call); online it resolves which release it would install.
 
-New versions install side by side: each version has its own
-`~/.local/share/rone/v<version>/` directory and the `~/.local/bin/rone`
-symlink is repointed at the one you just installed. Older versions stay on
-disk until you remove them (see Uninstall).
+Re-running the installer upgrades in place: the new version lands in
+`~/.local/share/rone/v<version>/`, the `~/.local/bin/rone` symlink is
+repointed at it, and previously installed version directories are removed —
+only one version is kept on disk.
 
 ### From source
 
@@ -107,7 +107,7 @@ API keys and personal presets in `~/.config/rone/` are untouched:
 ```bash
 rm ~/.local/bin/rone                 # remove the symlink
 rm -rf ~/.local/share/rone/v0.1.2    # remove one version (adjust the name)
-# or everything installed by rone, including older versions:
+# or everything installed by rone:
 rm -rf ~/.local/share/rone
 ```
 
