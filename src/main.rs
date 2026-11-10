@@ -203,6 +203,9 @@ const INSTALL_SCRIPT_ONE_LINER: &str =
 const GITHUB_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/oteissonniere/rone/releases/latest";
 
+/// The User-Agent sent with every HTTP request (GitHub's API rejects requests without one).
+const USER_AGENT: &str = concat!("rone/", env!("CARGO_PKG_VERSION"));
+
 /// The `tag_name` of the latest published release on GitHub (e.g. `"v0.2.1"`),
 /// or `None` when it cannot be fetched (no network). An unauthenticated one-shot
 /// check stays well within GitHub's per-IP rate limit.
@@ -320,7 +323,7 @@ async fn get_json<T: serde::de::DeserializeOwned>(
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(timeout.unwrap_or(30)))
         .build()?;
-    let mut request = client.get(url);
+    let mut request = client.get(url).header("User-Agent", USER_AGENT);
     if let Some(key) = api_key.filter(|key| !key.is_empty()) {
         request = request.bearer_auth(key);
     }

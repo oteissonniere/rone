@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-11-10
+
+### Fixed
+
+- `rone upgrade` (script installs): the latest-release check now sends a `User-Agent` header with its GitHub request, as required by the GitHub API (requests without one are rejected with HTTP 403). Without it, the up-to-date check silently failed and the installer was re-run every time.
+
 ## [0.2.1] - 2026-11-10
 
 ### Added
