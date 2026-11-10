@@ -136,6 +136,13 @@ pub fn exe_install_kind() -> Option<InstallKind> {
     classify_install_kind(real.parent()?.to_str()?)
 }
 
+/// Whether a running version is already the latest published release. GitHub
+/// release tags look like `v0.2.1` while rone's own version is a plain semver
+/// string, so the tag's leading `v` is stripped before comparing.
+pub fn is_latest_release_tag(current_version: &str, latest_tag: &str) -> bool {
+    latest_tag.trim_start_matches('v') == current_version
+}
+
 /// Load a preset from `<dir>/<name>.toml`, the first file found in the
 /// preset search chain ([`preset_dirs`]).
 pub fn load_preset(name: &str) -> Result<Preset> {
@@ -1625,5 +1632,12 @@ instructions = "A human must handle this."
         assert!(report.contains("\u{1b}[31m50.0%\u{1b}[0m"));
         assert!(report.contains("\u{1b}[32m100.0%\u{1b}[0m"));
         assert!(report.contains("\u{1b}[1mmisses:"));
+    }
+
+    #[test]
+    fn is_latest_release_tag_strips_the_leading_v() {
+        assert!(is_latest_release_tag("0.2.1", "v0.2.1"));
+        assert!(is_latest_release_tag("0.2.1", "0.2.1")); // a tag without the leading `v` compares as-is
+        assert!(!is_latest_release_tag("0.2.1", "v0.2.0"));
     }
 }

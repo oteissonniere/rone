@@ -14,10 +14,10 @@ use rone::config::{
 };
 use rone::{
     EvalResult, InstallKind, ModelList, below_threshold, build_request, exe_install_kind,
-    extract_answers, format_duration, list_presets, load_eval_cases, load_preset, load_presets,
-    parse_eval_cases, parse_vars, preset_dirs, read_state, read_states, render_answers,
-    render_batch, render_comparison, render_eval_report, render_latency, render_models,
-    render_presets, validate,
+    extract_answers, format_duration, is_latest_release_tag, list_presets, load_eval_cases,
+    load_preset, load_presets, parse_eval_cases, parse_vars, preset_dirs, read_state, read_states,
+    render_answers, render_batch, render_comparison, render_eval_report, render_latency,
+    render_models, render_presets, validate,
 };
 
 mod mcp;
@@ -198,6 +198,23 @@ enum Command {
 /// The one-liner that installs or upgrades rone from the GitHub releases.
 const INSTALL_SCRIPT_ONE_LINER: &str =
     "curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh";
+
+/// The GitHub endpoint that reports the latest published release of rone.
+const GITHUB_RELEASES_LATEST_URL: &str =
+    "https://api.github.com/repos/oteissonniere/rone/releases/latest";
+
+/// The `tag_name` of the latest published release on GitHub (e.g. `"v0.2.1"`),
+/// or `None` when it cannot be fetched (no network). An unauthenticated one-shot
+/// check stays well within GitHub's per-IP rate limit.
+async fn latest_github_release() -> Option<String> {
+    let latest: Value = get_json(GITHUB_RELEASES_LATEST_URL, None, Some(15))
+        .await
+        .ok()?;
+    latest
+        .get("tag_name")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
 
 /// Parse a confidence threshold between 0 and 1 (clap value parser).
 fn parse_confidence(value: &str) -> Result<f64, String> {
@@ -620,6 +637,19 @@ async fn main() -> Result<()> {
                 println!("rone is installed via Homebrew; upgrade it with:\n  brew upgrade rone");
             }
             Some(InstallKind::Script) => {
+                let current = env!("CARGO_PKG_VERSION");
+                match latest_github_release().await {
+                    Some(latest_tag) if is_latest_release_tag(current, &latest_tag) => {
+                        println!("rone {current} is already the latest release; nothing to do.");
+                        return Ok(());
+                    }
+                    Some(latest_tag) => {
+                        println!("Latest release: {latest_tag} (running {current})")
+                    }
+                    None => eprintln!(
+                        "note: could not check the latest release online; proceeding with the installer script"
+                    ),
+                }
                 println!("Fetching and running the installer script (latest release)...");
                 let status = std::process::Command::new("sh")
                     .arg("-c")

@@ -122,9 +122,12 @@ cargo build --release      # binary in target/release/rone
 executable's symlinks, so a linked binary still finds its real location) and
 does the right thing:
 
-- **installer script** — re-runs `scripts/install.sh` from GitHub: the latest
-  release lands in `~/.local/share/rone/v<version>/`, the symlink is repointed
-  and older version directories are removed;
+- **installer script** — first checks the latest published release on GitHub:
+  if rone is already up to date, it stops there with a "nothing to do"
+  message. Otherwise it re-runs `scripts/install.sh`: the latest release lands
+  in `~/.local/share/rone/v<version>/`, the symlink is repointed and older
+  version directories are removed (if the check cannot be done without network,
+  it proceeds with the installer anyway);
 - **Homebrew** — rone does not touch brew's installs, it only prints the
   command to run:
 

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-10
+
+### Added
+
+- `rone upgrade` (script installs): before re-running the installer, it now checks the latest published release on GitHub and stops with a "nothing to do" message when rone is already up to date; if the check cannot be done without network, it proceeds with the installer anyway.
+
 ## [0.2.0] - 2026-11-10
 
 ### Added
