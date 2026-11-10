@@ -103,6 +103,39 @@ fn preset_dirs_from(cwd: &Path, user: Option<PathBuf>, exe: Option<PathBuf>) -> 
     dirs
 }
 
+/// How the running `rone` binary was installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallKind {
+    /// By the GitHub installer script, under `~/.local/share/rone/vX.Y.Z/bin`.
+    Script,
+    /// By a Homebrew formula, inside `<prefix>/Cellar/rone/<version>/bin`.
+    Brew,
+}
+
+/// The pure classification rule of [`exe_install_kind`], split out for testing:
+/// it looks at the directory of the running executable (with its symlinks
+/// already resolved). Returns `None` when the location is not one rone knows
+/// how to manage (e.g. a source build under `target/`).
+pub fn classify_install_kind(exe_dir: &str) -> Option<InstallKind> {
+    if exe_dir.contains("/Cellar/rone/") {
+        Some(InstallKind::Brew)
+    } else if exe_dir.contains("/.local/share/rone/v") {
+        Some(InstallKind::Script)
+    } else {
+        None
+    }
+}
+
+/// Detect how this `rone` binary was installed by resolving the symlinks of
+/// the running executable and classifying its real install directory, so a
+/// symlinked `~/.local/bin/rone` or `/opt/homebrew/bin/rone` still maps back
+/// to its true location.
+pub fn exe_install_kind() -> Option<InstallKind> {
+    let exe = std::env::current_exe().ok()?;
+    let real = std::fs::canonicalize(&exe).unwrap_or(exe);
+    classify_install_kind(real.parent()?.to_str()?)
+}
+
 /// Load a preset from `<dir>/<name>.toml`, the first file found in the
 /// preset search chain ([`preset_dirs`]).
 pub fn load_preset(name: &str) -> Result<Preset> {

@@ -13,10 +13,11 @@ use rone::config::{
     resolve_api_key,
 };
 use rone::{
-    EvalResult, ModelList, below_threshold, build_request, extract_answers, format_duration,
-    list_presets, load_eval_cases, load_preset, load_presets, parse_eval_cases, parse_vars,
-    preset_dirs, read_state, read_states, render_answers, render_batch, render_comparison,
-    render_eval_report, render_latency, render_models, render_presets, validate,
+    EvalResult, InstallKind, ModelList, below_threshold, build_request, exe_install_kind,
+    extract_answers, format_duration, list_presets, load_eval_cases, load_preset, load_presets,
+    parse_eval_cases, parse_vars, preset_dirs, read_state, read_states, render_answers,
+    render_batch, render_comparison, render_eval_report, render_latency, render_models,
+    render_presets, validate,
 };
 
 mod mcp;
@@ -189,7 +190,14 @@ enum Command {
         #[arg(long, value_name = "URL")]
         base_url: Option<String>,
     },
+    /// Upgrade rone itself: re-runs the installer script when rone was
+    /// installed with it, or points to `brew upgrade` for a Homebrew install.
+    Upgrade,
 }
+
+/// The one-liner that installs or upgrades rone from the GitHub releases.
+const INSTALL_SCRIPT_ONE_LINER: &str =
+    "curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh";
 
 /// Parse a confidence threshold between 0 and 1 (clap value parser).
 fn parse_confidence(value: &str) -> Result<f64, String> {
@@ -605,6 +613,39 @@ async fn main() -> Result<()> {
             let list: ModelList = get_json(&url, target.api_key.as_deref(), target.timeout).await?;
             println!("{}", render_models(&list.data, colors));
         }
+        Command::Upgrade => match exe_install_kind() {
+            Some(InstallKind::Brew) => {
+                // Homebrew manages its own upgrade path (the tap is refreshed
+                // on every brew run), so only point at the brew command.
+                println!("rone is installed via Homebrew; upgrade it with:\n  brew upgrade rone");
+            }
+            Some(InstallKind::Script) => {
+                println!("Fetching and running the installer script (latest release)...");
+                let status = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(INSTALL_SCRIPT_ONE_LINER)
+                    .status()
+                    .with_context(|| "failed to run the installer script")?;
+                if !status.success() {
+                    bail!(
+                        "the installer script failed (exit code {})",
+                        status.code().unwrap_or(-1),
+                    );
+                }
+                println!("done: rone upgraded by the installer script");
+            }
+            // A binary run from somewhere rone does not recognize (e.g. a
+            // source build under target/): show both upgrade paths and stop.
+            None => {
+                eprintln!(
+                    "could not detect how rone was installed (running from an unrecognized location)"
+                );
+                eprintln!("upgrade it manually with one of:");
+                eprintln!("  - installer script: {INSTALL_SCRIPT_ONE_LINER}");
+                eprintln!("  - Homebrew (macOS): brew upgrade rone");
+                std::process::exit(2);
+            }
+        },
     }
     Ok(())
 }

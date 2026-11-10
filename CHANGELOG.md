@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-10
+
+### Added
+
+- `rone upgrade` subcommand: detects how rone is installed (installer script vs Homebrew) and self-upgrades accordingly — re-runs the installer script from GitHub for script installs, and prints the one-liner to run (`brew upgrade rone`) for Homebrew installs instead of executing it.
+
+### Changed
+
+- README: added a dedicated section for installing with Homebrew on macOS (tap, `brew trust`, install), an "Upgrading" section documenting `rone upgrade` and `brew upgrade rone`, brew uninstall steps in the uninstall section, and a self-upgrade item in the progress list.
+
 ## [0.1.3] - 2026-11-09
 
 ### Fixed

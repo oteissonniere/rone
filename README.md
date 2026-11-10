@@ -28,7 +28,7 @@ Prebuilt binaries are published as GitHub release assets for four targets:
 
 | Platform | Target triple | Notes |
 |---|---|---|
-| macOS, Apple Silicon (arm64) | `aarch64-apple-darwin` | verified end-to-end with v0.1.2 |
+| macOS, Apple Silicon (arm64) | `aarch64-apple-darwin` | verified end-to-end via the installer script and Homebrew |
 | macOS, Intel (x86_64) | `x86_64-apple-darwin` | built and published by the release CI |
 | Linux x86_64 (glibc) | `x86_64-unknown-linux-gnu` | any 64-bit glibc distro: Debian, Ubuntu, Fedora, RHEL, Arch, ... |
 | Linux ARM 64-bit (aarch64/arm64, glibc) | `aarch64-unknown-linux-gnu` | needs a 64-bit OS — verified on Raspberry Pi with the standard 64-bit image |
@@ -71,7 +71,7 @@ Options — pin an exact version instead of latest, or preview without
 installing:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh -s -- 0.1.2       # install v0.1.2 exactly
+curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh -s -- 0.2.0       # install v0.2.0 exactly
 curl -fsSL https://raw.githubusercontent.com/oteissonniere/rone/main/scripts/install.sh | sh -s -- --dry-run   # show what would be done, then exit
 ```
 
@@ -82,6 +82,24 @@ Re-running the installer upgrades in place: the new version lands in
 `~/.local/share/rone/v<version>/`, the `~/.local/bin/rone` symlink is
 repointed at it, and previously installed version directories are removed —
 only one version is kept on disk.
+
+### With Homebrew (macOS)
+
+On macOS you can also install rone from the project's
+[Homebrew tap](https://github.com/oteissonniere/homebrew-rone). The formula
+packages the same prebuilt release binaries published on GitHub:
+
+```bash
+brew tap oteissonniere/rone
+brew trust oteissonniere/rone   # first time only; Homebrew warns about external taps
+brew install rone
+```
+
+Homebrew installs the binary into `<prefix>/Cellar/rone/<version>/bin/`
+(`<prefix>` is `/opt/homebrew` on Apple Silicon, `/usr/local` on Intel) and
+links it as `rone` in `<prefix>/bin`, which is already on your PATH. Your
+config, API keys and personal presets in `~/.config/rone/` work exactly as
+with the other installs.
 
 ### From source
 
@@ -98,6 +116,25 @@ or build it in place:
 cargo build --release      # binary in target/release/rone
 ```
 
+### Upgrading
+
+`rone upgrade` detects how rone itself was installed (it resolves the
+executable's symlinks, so a linked binary still finds its real location) and
+does the right thing:
+
+- **installer script** — re-runs `scripts/install.sh` from GitHub: the latest
+  release lands in `~/.local/share/rone/v<version>/`, the symlink is repointed
+  and older version directories are removed;
+- **Homebrew** — rone does not touch brew's installs, it only prints the
+  command to run:
+
+  ```bash
+  brew upgrade rone
+  ```
+
+Without the subcommand: re-run the one-liner from above (script install) or
+`brew upgrade rone` (Homebrew).
+
 ### Uninstall
 
 An installer-based install touches exactly two things — the version directory
@@ -106,13 +143,20 @@ API keys and personal presets in `~/.config/rone/` are untouched:
 
 ```bash
 rm ~/.local/bin/rone                 # remove the symlink
-rm -rf ~/.local/share/rone/v0.1.2    # remove one version (adjust the name)
+rm -rf ~/.local/share/rone/v0.2.0    # remove one version (adjust the name)
 # or everything installed by rone:
 rm -rf ~/.local/share/rone
 ```
 
 Remove `~/.config/rone/` as well if you no longer want your local config and
-personal presets. For a from-source install:
+personal presets. For a Homebrew install:
+
+```bash
+brew uninstall rone                  # remove rone (your ~/.config/rone stays)
+brew untap oteissonniere/rone        # optional: drop the tap too
+```
+
+For a from-source install:
 
 ```bash
 rm ~/.cargo/bin/rone ~/.cargo/bin/mock_server
@@ -269,6 +313,10 @@ live endpoint):
   selected profile (or `--base-url`) and lists the available models, one per
   line (bold id, name and description when the server sends them); the
   profile's `api_key` and `timeout` are honored.
+- **Self-upgrade**: `rone upgrade` detects how rone itself was installed
+  (installer script or Homebrew) by resolving the executable's symlinks; for a
+  script install it re-runs `scripts/install.sh` from GitHub, for a brew
+  install it prints `brew upgrade rone` without touching brew's installs.
 - **Mock server** (`src/bin/mock_server.rs`): a local
   `/v1/systemone`-compatible endpoint with deterministic answers (a pure
   function of the input), so the CLI can be exercised end to end without an
@@ -280,9 +328,7 @@ live endpoint):
 
 ## Roadmap
 
-- Set up the GitHub repository and publish on crates.io
-- More presets for common use cases (sentiment, compliance, ...)
-- Packaging (Homebrew tap)
+- Publish on crates.io
 - First-class example of a multi-question preset with `--var` variables
 
 ## Draft interface
@@ -348,6 +394,10 @@ cat examples/tickets.txt | rone batch --preset triage --json
 # evaluate a preset over a labeled dataset (a JSON array of {"input", "expected"})
 rone eval --preset triage --file examples/evals/triage.json
 rone eval --preset triage --file examples/evals/triage.json --json
+
+# upgrade rone itself: re-runs the installer script when installed with it,
+# prints `brew upgrade rone` for a Homebrew install
+rone upgrade
 ```
 
 ### Configuration file
