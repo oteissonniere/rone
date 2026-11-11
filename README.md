@@ -311,7 +311,9 @@ live endpoint):
   their answers side by side, one labeled block per profile; JSON mode emits
   an array of `{profile, model, answers}` objects.
 - **MCP server mode**: `rone mcp` serves the presets as MCP tools over stdio
-  (`list_presets`, `ask`, `batch`), so AI agents can call them.
+  (`list_presets`, `list_profiles`, `ask`, `batch`), so AI agents can call
+  them; tool calls accept the same profiles as the CLI commands (via a
+  `profile` argument or the `RONE_PROFILE` environment variable).
 - **Model listing**: `rone models` queries the `/models` endpoint of the
   selected profile (or `--base-url`) and lists the available models, one per
   line (bold id, name and description when the server sends them); the
@@ -479,12 +481,13 @@ How it works:
   result flagged with `isError: true` plus a readable message, so an agent can
   react to them.
 
-Three tools are exposed:
+Four tools are exposed:
 
 | Tool | Required arguments | Optional arguments |
 |---|---|---|
 | `list_presets` | — | — |
-| `ask` | `preset`, `state` (the input text to analyze) | `vars`, `min_confidence`, `model`, `base_url`, `json` |
+| `list_profiles` | — | — |
+| `ask` | `preset`, `state` (the input text to analyze) | `vars`, `min_confidence`, `model`, `base_url`, `profile`, `json` |
 | `batch` | `preset`, `states` (an array of strings, or one state per line in a single string) | same as `ask` |
 
 Optional arguments:
@@ -494,12 +497,21 @@ Optional arguments:
 - `min_confidence` (0..1): when any answer falls below it, the call is
   flagged `isError` and prefixed with a per-answer warning — the answers
   themselves are still returned, so the agent can decide what to do with them.
-- `model` / `base_url`: override the model and endpoint for that call only.
+- `model` / `base_url`: override the profile's model and base_url for that
+  call only.
+- `profile`: a profile name from `rone.toml`; it provides the call with
+  `base_url`, `model`, `min_confidence`, `api_key` and `timeout`.
 - `json: true`: machine-readable JSON instead of the rendered table.
 
-Endpoint selection in MCP mode differs from the CLI commands: `rone mcp` does
-not read your `rone.toml` profiles, so a tool call defaults to model `laya` at
-`http://localhost:1234/v1`. When your model lives elsewhere, pass it per call:
+Endpoint resolution in MCP mode follows the same rules as the CLI commands.
+For each call, the target is resolved from, in order: the `profile` argument,
+then the `RONE_PROFILE` environment variable, then the config file's
+`default_profile`, then the built-in defaults (model `laya` at
+`http://localhost:1234/v1`). Per-call `model`, `base_url` and
+`min_confidence` arguments override the profile's values for that call; only
+the profile can carry an `api_key` and a request `timeout`. If your model
+lives elsewhere, define a profile in `rone.toml` (or pass `RONE_PROFILE`)
+and reference it per call:
 
 ```json
 {
@@ -507,14 +519,13 @@ not read your `rone.toml` profiles, so a tool call defaults to model `laya` at
   "arguments": {
     "preset": "triage",
     "state": "I was billed twice",
-    "model": "laya",
-    "base_url": "http://inference.example.eu:1234/v1"
+    "profile": "inference"
   }
 }
 ```
 
-(Note there is no `api_key` argument yet — an endpoint requiring a bearer
-token is not reachable from the MCP server as of today.)
+An unknown profile name is a readable `isError` result telling you no
+`rone.toml` was found — not a crash.
 
 Client configuration (Claude Desktop, Cursor or any MCP client) — the server
 is a local command, so `command` must resolve to your installed binary; use

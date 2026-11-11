@@ -9,8 +9,7 @@ use serde_json::Value;
 
 use rone::color::ColorMode;
 use rone::config::{
-    Config, Profile, load_config, parse_profiles, profile_from_env, render_profiles,
-    resolve_api_key,
+    load_config, parse_profiles, profile_from_env, render_profiles, resolve_target,
 };
 use rone::{
     EvalResult, InstallKind, ModelList, below_threshold, build_request, exe_install_kind,
@@ -228,54 +227,6 @@ fn parse_confidence(value: &str) -> Result<f64, String> {
         return Err(format!("'{value}' must be between 0 and 1"));
     }
     Ok(v)
-}
-
-/// The effective request target after merging explicit CLI flags, the
-/// selected profile, and built-in defaults.
-struct Target {
-    base_url: String,
-    model: String,
-    min_confidence: Option<f64>,
-    api_key: Option<String>,
-    timeout: Option<u64>,
-}
-
-/// Resolve the effective target: explicit command-line flags win, then the
-/// selected profile, then built-in defaults.
-fn resolve_target(
-    config: Option<&Config>,
-    profile: Option<&str>,
-    base_url: Option<&str>,
-    model: Option<&str>,
-    min_confidence: Option<f64>,
-    api_key: Option<&str>,
-    timeout: Option<u64>,
-) -> Result<Target> {
-    let profile = match (config, profile) {
-        (Some(cfg), _) => cfg.resolve_profile(profile)?,
-        // Without a config file only the built-in default may apply; an
-        // explicitly requested profile is a clear error, not a silent fallback.
-        (None, Some(name)) => bail!(
-            "unknown profile '{name}': no rone.toml found (looked for \
-             $RONE_CONFIG, ./rone.toml and ~/.config/rone/rone.toml)"
-        ),
-        (None, None) => Profile::default(),
-    };
-    let api_key = match api_key {
-        Some(k) => Some(k.to_string()),
-        None => profile
-            .api_key
-            .as_deref()
-            .map(resolve_api_key)
-            .transpose()?,
-    };
-    Ok(Target {
-        base_url: base_url.map(str::to_string).unwrap_or(profile.base_url),
-        model: model.map(str::to_string).unwrap_or(profile.model),
-        min_confidence: min_confidence.or(profile.min_confidence),
-        api_key,
-        timeout: timeout.or(profile.timeout),
-    })
 }
 
 /// The full URL of the /v1/systemone endpoint for a base URL.
@@ -617,7 +568,7 @@ async fn main() -> Result<()> {
                 "no config file found (looked for rone.toml and ~/.config/rone/rone.toml)"
             ),
         },
-        Command::Mcp => mcp::run().await?,
+        Command::Mcp => mcp::run(config.as_ref()).await?,
         Command::Models { profile, base_url } => {
             let profile = profile.or_else(profile_from_env);
             let target = resolve_target(

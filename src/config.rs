@@ -126,6 +126,54 @@ pub fn resolve_api_key(raw: &str) -> Result<String> {
     }
 }
 
+/// The effective request target after merging explicit overrides, the
+/// selected profile and the built-in defaults.
+#[derive(Clone, Debug)]
+pub struct Target {
+    pub base_url: String,
+    pub model: String,
+    pub min_confidence: Option<f64>,
+    pub api_key: Option<String>,
+    pub timeout: Option<u64>,
+}
+
+/// Resolve the effective target: explicit overrides win over the selected
+/// profile, which in turn falls back to the built-in defaults. When no config
+/// file was found, a named profile is a clear error — not a silent fallback.
+pub fn resolve_target(
+    config: Option<&Config>,
+    profile: Option<&str>,
+    base_url: Option<&str>,
+    model: Option<&str>,
+    min_confidence: Option<f64>,
+    api_key: Option<&str>,
+    timeout: Option<u64>,
+) -> Result<Target> {
+    let profile = match (config, profile) {
+        (Some(cfg), _) => cfg.resolve_profile(profile)?,
+        (None, Some(name)) => bail!(
+            "unknown profile '{name}': no rone.toml found (looked for \
+             $RONE_CONFIG, ./rone.toml and ~/.config/rone/rone.toml)"
+        ),
+        (None, None) => Profile::default(),
+    };
+    let api_key = match api_key {
+        Some(k) => Some(k.to_string()),
+        None => profile
+            .api_key
+            .as_deref()
+            .map(resolve_api_key)
+            .transpose()?,
+    };
+    Ok(Target {
+        base_url: base_url.map(str::to_string).unwrap_or(profile.base_url),
+        model: model.map(str::to_string).unwrap_or(profile.model),
+        min_confidence: min_confidence.or(profile.min_confidence),
+        api_key,
+        timeout: timeout.or(profile.timeout),
+    })
+}
+
 /// The profile named by the `RONE_PROFILE` environment variable, if set
 /// and non-empty. Used as a fallback when `--profile` is not given.
 pub fn profile_from_env() -> Option<String> {
@@ -460,6 +508,89 @@ api_key = "sk-literal"
         .join("\n")
             + "\n";
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn resolve_target_uses_builtin_defaults_without_config() {
+        let target = resolve_target(None, None, None, None, None, None, None).unwrap();
+        assert_eq!(target.base_url, DEFAULT_BASE_URL);
+        assert_eq!(target.model, DEFAULT_MODEL);
+        assert_eq!(target.min_confidence, None);
+        assert_eq!(target.api_key, None);
+        assert_eq!(target.timeout, None);
+    }
+
+    #[test]
+    fn resolve_target_unknown_profile_without_config_is_error() {
+        let err = resolve_target(None, Some("zzz"), None, None, None, None, None).unwrap_err();
+        assert!(err.to_string().contains("unknown profile 'zzz'"));
+    }
+
+    #[test]
+    fn resolve_target_profile_fields_are_used() {
+        let config = Config::parse(
+            r#"
+default_profile = "a"
+[profiles.a]
+base_url = "http://127.0.0.1:9/v1"
+model = "mini-ai"
+min_confidence = 0.5
+api_key = "k1"
+timeout = 12
+"#,
+        )
+        .unwrap();
+        let target = resolve_target(Some(&config), None, None, None, None, None, None).unwrap();
+        assert_eq!(target.base_url, "http://127.0.0.1:9/v1");
+        assert_eq!(target.model, "mini-ai");
+        assert_eq!(target.min_confidence, Some(0.5));
+        assert_eq!(target.api_key, Some("k1".to_string()));
+        assert_eq!(target.timeout, Some(12));
+    }
+
+    #[test]
+    fn resolve_target_explicit_values_override_the_profile() {
+        let config = Config::parse(
+            r#"
+[profiles.a]
+base_url = "http://127.0.0.1:9/v1"
+model = "mini-ai"
+timeout = 12
+"#,
+        )
+        .unwrap();
+        let target = resolve_target(
+            Some(&config),
+            Some("a"),
+            Some("http://x.example.com/v1"),
+            None,
+            Some(0.9),
+            Some("k2"),
+            Some(5),
+        )
+        .unwrap();
+        assert_eq!(target.base_url, "http://x.example.com/v1");
+        assert_eq!(target.model, "mini-ai");
+        assert_eq!(target.min_confidence, Some(0.9));
+        assert_eq!(target.api_key, Some("k2".to_string()));
+        assert_eq!(target.timeout, Some(5));
+    }
+
+    #[test]
+    fn resolve_target_resolves_env_api_key_from_profile() {
+        let _env = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("RONE_TEST_KEY", "secret") };
+        let config = Config::parse(
+            r#"
+[profiles.a]
+api_key = "env:RONE_TEST_KEY"
+"#,
+        )
+        .unwrap();
+        let target =
+            resolve_target(Some(&config), Some("a"), None, None, None, None, None).unwrap();
+        assert_eq!(target.api_key, Some("secret".to_string()));
+        unsafe { std::env::remove_var("RONE_TEST_KEY") };
     }
 
     #[test]

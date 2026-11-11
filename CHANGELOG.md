@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-17
+
+### Added
+
+- `rone mcp` now supports the profiles defined in `rone.toml`: a new `list_profiles` MCP tool lists them, and `ask` and `batch` accept a `profile` argument (with the `RONE_PROFILE` environment variable as fallback). Per-call target resolution follows the same rules as the CLI commands — `profile` argument, then `RONE_PROFILE`, then the config file's `default_profile`, then the built-in defaults.
+- Per-call `model`, `base_url` and `min_confidence` arguments override the profile's values for that call; a profile is also the only way to carry an `api_key` (sent as a bearer token) and a request `timeout` to the MCP server — endpoints requiring authentication are now reachable from it.
+
+### Fixed
+
+- Unknown profile names in MCP mode are reported as a readable tool error ("no rone.toml found") instead of silently falling back to the built-in defaults.
+
 ## [0.2.2] - 2026-11-10
 
 ### Fixed

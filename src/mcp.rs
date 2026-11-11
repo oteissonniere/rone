@@ -1,5 +1,6 @@
 //! MCP (Model Context Protocol) server: expose the Rone presets as MCP tools
-//! over stdio, so an AI agent can call `list_presets`, `ask` and `batch`.
+//! over stdio, so an AI agent can call `list_presets`, `list_profiles`,
+//! `ask` and `batch`.
 //!
 //! Transport: JSON-RPC 2.0, one message per line on stdin/stdout. All logs go
 //! to stderr so they never break the stdout protocol.
@@ -11,6 +12,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
+use rone::config::{Config, profile_from_env, render_profiles, resolve_target};
 use rone::{
     below_threshold, build_request, color::ColorMode, extract_answers, list_presets, load_preset,
     render_answers, render_batch, validate,
@@ -30,15 +32,16 @@ struct ToolOutcome {
 }
 
 /// Run the MCP server loop: read one JSON-RPC message per line from stdin,
-/// write the response (if any) to stdout.
-pub async fn run() -> Result<()> {
+/// write the response (if any) to stdout. `config` is the parsed rone.toml
+/// (when one was found), used for profile resolution on every call.
+pub async fn run(config: Option<&Config>) -> Result<()> {
     eprintln!("rone: MCP server running on stdio");
     let mut reader = BufReader::new(std::io::stdin()).lines();
     let mut out = std::io::stdout();
     loop {
         match reader.next() {
             Some(Ok(line)) => {
-                if let Some(resp) = handle(&line).await {
+                if let Some(resp) = handle(&line, config).await {
                     writeln!(out, "{resp}")?;
                     out.flush()?;
                 }
@@ -52,7 +55,7 @@ pub async fn run() -> Result<()> {
 
 /// Handle one JSON-RPC message. Returns the response to send, or `None` for
 /// notifications (which expect no response).
-async fn handle(msg: &str) -> Option<Value> {
+async fn handle(msg: &str, config: Option<&Config>) -> Option<Value> {
     let value: Value = match serde_json::from_str(msg) {
         Ok(v) => v,
         Err(e) => {
@@ -81,7 +84,7 @@ async fn handle(msg: &str) -> Option<Value> {
         "initialize" => Ok(initialize_result(&params)),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(tools_list()),
-        "tools/call" => Ok(call_tool(&params).await),
+        "tools/call" => Ok(call_tool(&params, config).await),
         other => Err((-32601, format!("Method not found: {other}"))),
     };
 
@@ -112,8 +115,9 @@ fn initialize_result(params: &Value) -> Value {
         "capabilities": { "tools": {} },
         "serverInfo": { "name": "rone", "version": env!("CARGO_PKG_VERSION") },
         "instructions": "Rone: call System One decision models. Use list_presets to \
-         discover available presets, then ask (one state) or batch (many states) \
-         a preset."
+         discover the available presets and list_profiles for the configured endpoints; \
+         then ask (one state) or batch (many states) a preset, optionally with a \
+         profile."
     })
 }
 
@@ -130,10 +134,17 @@ fn tools_list() -> Value {
             "maximum": 1.0,
             "description": "Only accept answers with at least this much confidence."
         },
-        "model": { "type": "string", "description": "Model name sent in the request." },
+        "model": {
+            "type": "string",
+            "description": "Model name sent in the request; overrides the profile's model."
+        },
         "base_url": {
             "type": "string",
-            "description": "Base URL of the /v1/systemone-compatible endpoint."
+            "description": "Base URL of the /v1/systemone-compatible endpoint; overrides the profile's base_url."
+        },
+        "profile": {
+            "type": "string",
+            "description": "Profile name from rone.toml; sets base_url, model, min_confidence, api_key and timeout."
         },
         "json": {
             "type": "boolean",
@@ -148,6 +159,11 @@ fn tools_list() -> Value {
                 "inputSchema": { "type": "object", "properties": {} }
             },
             {
+                "name": "list_profiles",
+                "description": "List the profiles defined in the config file (rone.toml).",
+                "inputSchema": { "type": "object", "properties": {} }
+            },
+            {
                 "name": "ask",
                 "description": "Ask a System One model using a preset, for a single state.",
                 "inputSchema": {
@@ -159,6 +175,7 @@ fn tools_list() -> Value {
                         "min_confidence": common["min_confidence"],
                         "model": common["model"],
                         "base_url": common["base_url"],
+                        "profile": common["profile"],
                         "json": common["json"]
                     },
                     "required": ["preset", "state"]
@@ -179,6 +196,7 @@ fn tools_list() -> Value {
                         "min_confidence": common["min_confidence"],
                         "model": common["model"],
                         "base_url": common["base_url"],
+                        "profile": common["profile"],
                         "json": common["json"]
                     },
                     "required": ["preset", "states"]
@@ -189,7 +207,7 @@ fn tools_list() -> Value {
 }
 
 /// Dispatch a `tools/call` request to the named tool.
-async fn call_tool(params: &Value) -> Value {
+async fn call_tool(params: &Value, config: Option<&Config>) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let args = params
         .get("arguments")
@@ -197,8 +215,9 @@ async fn call_tool(params: &Value) -> Value {
         .unwrap_or(Value::Object(Default::default()));
     let outcome = match name {
         "list_presets" => run_list_presets(&args).await,
-        "ask" => run_ask(&args).await,
-        "batch" => run_batch(&args).await,
+        "list_profiles" => run_list_profiles(config),
+        "ask" => run_ask(&args, config).await,
+        "batch" => run_batch(&args, config).await,
         other => ToolOutcome {
             text: format!("unknown tool '{other}'"),
             below: true,
@@ -229,9 +248,25 @@ async fn run_list_presets(_args: &Value) -> ToolOutcome {
     }
 }
 
+/// `list_profiles`: returns the profiles of the config file, or a clear
+/// error when no config file was found.
+fn run_list_profiles(config: Option<&Config>) -> ToolOutcome {
+    match config {
+        Some(cfg) => ToolOutcome {
+            text: render_profiles(cfg, ColorMode::off()),
+            below: false,
+        },
+        None => ToolOutcome {
+            text: "no config file found (looked for rone.toml and ~/.config/rone/rone.toml)"
+                .to_string(),
+            below: true,
+        },
+    }
+}
+
 /// `ask`: run one state through a preset.
-async fn run_ask(args: &Value) -> ToolOutcome {
-    match ask_inner(args).await {
+async fn run_ask(args: &Value, config: Option<&Config>) -> ToolOutcome {
+    match ask_inner(args, config).await {
         Ok(outcome) => outcome,
         Err(e) => ToolOutcome {
             text: format!("Error: {e:#}"),
@@ -240,21 +275,39 @@ async fn run_ask(args: &Value) -> ToolOutcome {
     }
 }
 
-async fn ask_inner(args: &Value) -> Result<ToolOutcome> {
+async fn ask_inner(args: &Value, config: Option<&Config>) -> Result<ToolOutcome> {
     let preset_name = arg_str(args, "preset")?;
     let state = arg_str(args, "state")?;
     let common = common_args(args)?;
     let vars = arg_vars(args)?;
 
+    // Resolve the target before loading the preset so an unknown profile
+    // fails fast without any network access.
+    let target = resolve_target(
+        config,
+        common.profile.as_deref(),
+        common.base_url.as_deref(),
+        common.model.as_deref(),
+        common.min_confidence,
+        None,
+        None,
+    )?;
+
     let preset = load_preset(&preset_name)?;
     validate(&preset)?;
-    let request = build_request(&common.model, &state, &preset, &vars)?;
-    let response = send(&common.base_url, &request).await?;
+    let request = build_request(&target.model, &state, &preset, &vars)?;
+    let response = send(
+        &target.base_url,
+        &request,
+        target.api_key.as_deref(),
+        target.timeout,
+    )
+    .await?;
     let answers = extract_answers(&response);
 
     let mut text = render_answers(&answers, common.as_json, ColorMode::off());
     let mut below = false;
-    if let Some(min) = common.min_confidence {
+    if let Some(min) = target.min_confidence {
         let failed = below_threshold(&answers, min);
         if !failed.is_empty() {
             below = true;
@@ -276,8 +329,8 @@ async fn ask_inner(args: &Value) -> Result<ToolOutcome> {
 }
 
 /// `batch`: run many states through a preset.
-async fn run_batch(args: &Value) -> ToolOutcome {
-    match batch_inner(args).await {
+async fn run_batch(args: &Value, config: Option<&Config>) -> ToolOutcome {
+    match batch_inner(args, config).await {
         Ok(outcome) => outcome,
         Err(e) => ToolOutcome {
             text: format!("Error: {e:#}"),
@@ -286,11 +339,23 @@ async fn run_batch(args: &Value) -> ToolOutcome {
     }
 }
 
-async fn batch_inner(args: &Value) -> Result<ToolOutcome> {
+async fn batch_inner(args: &Value, config: Option<&Config>) -> Result<ToolOutcome> {
     let preset_name = arg_str(args, "preset")?;
     let states = arg_states(args)?;
     let common = common_args(args)?;
     let vars = arg_vars(args)?;
+
+    // Resolve the target before loading the preset so an unknown profile
+    // fails fast without any network access.
+    let target = resolve_target(
+        config,
+        common.profile.as_deref(),
+        common.base_url.as_deref(),
+        common.model.as_deref(),
+        common.min_confidence,
+        None,
+        None,
+    )?;
 
     let preset = load_preset(&preset_name)?;
     validate(&preset)?;
@@ -299,10 +364,16 @@ async fn batch_inner(args: &Value) -> Result<ToolOutcome> {
     let mut any_below = false;
     let mut warnings = String::new();
     for (i, state) in states.iter().enumerate() {
-        let request = build_request(&common.model, state, &preset, &vars)?;
-        let response = send(&common.base_url, &request).await?;
+        let request = build_request(&target.model, state, &preset, &vars)?;
+        let response = send(
+            &target.base_url,
+            &request,
+            target.api_key.as_deref(),
+            target.timeout,
+        )
+        .await?;
         let answers = extract_answers(&response);
-        if let Some(min) = common.min_confidence {
+        if let Some(min) = target.min_confidence {
             for (id, conf) in &below_threshold(&answers, min) {
                 any_below = true;
                 match conf {
@@ -421,18 +492,19 @@ fn arg_states(args: &Value) -> Result<Vec<String>> {
     Ok(states)
 }
 
-/// The arguments shared by `ask` and `batch`, with their defaults.
+/// The arguments shared by `ask` and `batch`. Defaults are applied later, in
+/// `resolve_target`: an argument may stay `None` when no profile sets it.
 struct CommonArgs {
-    model: String,
-    base_url: String,
+    model: Option<String>,
+    base_url: Option<String>,
     as_json: bool,
     min_confidence: Option<f64>,
+    profile: Option<String>,
 }
 
 fn common_args(args: &Value) -> Result<CommonArgs> {
-    let model = arg_opt_str(args, "model").unwrap_or_else(|| "laya".to_string());
-    let base_url =
-        arg_opt_str(args, "base_url").unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+    let model = arg_opt_str(args, "model");
+    let base_url = arg_opt_str(args, "base_url");
     let as_json = args.get("json").and_then(Value::as_bool).unwrap_or(false);
     let min_confidence = match args.get("min_confidence") {
         Some(v) => {
@@ -446,22 +518,34 @@ fn common_args(args: &Value) -> Result<CommonArgs> {
         }
         None => None,
     };
+    let profile = arg_opt_str(args, "profile").or_else(profile_from_env);
     Ok(CommonArgs {
         model,
         base_url,
         as_json,
         min_confidence,
+        profile,
     })
 }
 
 /// POST a `/v1/systemone` request. (Duplicated from the CLI on purpose: the
 /// library stays HTTP-free.)
-async fn send(base_url: &str, request: &Value) -> Result<Value> {
+async fn send(
+    base_url: &str,
+    request: &Value,
+    api_key: Option<&str>,
+    timeout: Option<u64>,
+) -> Result<Value> {
     let url = format!("{}/systemone", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .json(request)
+    let mut req = client.post(&url).json(request);
+    if let Some(t) = timeout {
+        req = req.timeout(Duration::from_secs(t));
+    }
+    if let Some(key) = api_key {
+        req = req.header("Authorization", format!("Bearer {key}"));
+    }
+    let resp = req
         .send()
         .await
         .with_context(|| format!("failed to reach {url}"))?;
@@ -483,7 +567,7 @@ mod tests {
     #[tokio::test]
     async fn initialize_echoes_supported_version() {
         let msg = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#;
-        let resp = handle(msg).await.unwrap();
+        let resp = handle(msg, None).await.unwrap();
         assert_eq!(resp["result"]["protocolVersion"], "2025-03-26");
         assert_eq!(resp["result"]["serverInfo"]["name"], "rone");
         assert_eq!(resp["id"], 1);
@@ -492,37 +576,63 @@ mod tests {
     #[tokio::test]
     async fn initialize_falls_back_on_unknown_version() {
         let msg = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}"#;
-        let resp = handle(msg).await.unwrap();
+        let resp = handle(msg, None).await.unwrap();
         assert_eq!(resp["result"]["protocolVersion"], PROTOCOL_VERSION);
     }
 
     #[tokio::test]
-    async fn tools_list_has_the_three_tools() {
+    async fn tools_list_has_the_four_tools() {
         let msg = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
-        let resp = handle(msg).await.unwrap();
+        let resp = handle(msg, None).await.unwrap();
         let tools = resp["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, vec!["list_presets", "ask", "batch"]);
+        assert_eq!(names, vec!["list_presets", "list_profiles", "ask", "batch"]);
+    }
+
+    #[tokio::test]
+    async fn ask_with_unknown_profile_is_error() {
+        let msg = r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"ask","arguments":{"preset":"triage","state":"x","profile":"nope"}}}"#;
+        let resp = handle(msg, None).await.unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+        assert!(
+            resp["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("unknown profile 'nope'")
+        );
+    }
+
+    #[tokio::test]
+    async fn list_profiles_without_config_is_error() {
+        let msg = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"list_profiles","arguments":{}}}"#;
+        let resp = handle(msg, None).await.unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+        assert!(
+            resp["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("no config file found")
+        );
     }
 
     #[tokio::test]
     async fn ping_returns_empty_object() {
         let msg = r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#;
-        let resp = handle(msg).await.unwrap();
+        let resp = handle(msg, None).await.unwrap();
         assert_eq!(resp["result"], json!({}));
     }
 
     #[tokio::test]
     async fn unknown_method_is_method_not_found() {
         let msg = r#"{"jsonrpc":"2.0","id":4,"method":"bogus"}"#;
-        let resp = handle(msg).await.unwrap();
+        let resp = handle(msg, None).await.unwrap();
         assert_eq!(resp["error"]["code"], -32601);
     }
 
     #[tokio::test]
     async fn unknown_tool_is_error_result() {
         let msg = r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#;
-        let resp = handle(msg).await.unwrap();
+        let resp = handle(msg, None).await.unwrap();
         assert_eq!(resp["result"]["isError"], true);
         assert!(
             resp["result"]["content"][0]["text"]
@@ -535,7 +645,7 @@ mod tests {
     #[tokio::test]
     async fn ask_without_preset_is_error() {
         let msg = r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"ask","arguments":{}}}"#;
-        let resp = handle(msg).await.unwrap();
+        let resp = handle(msg, None).await.unwrap();
         assert_eq!(resp["result"]["isError"], true);
         assert!(
             resp["result"]["content"][0]["text"]
@@ -548,7 +658,7 @@ mod tests {
     #[tokio::test]
     async fn batch_without_states_is_error() {
         let msg = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"batch","arguments":{"preset":"triage"}}}"#;
-        let resp = handle(msg).await.unwrap();
+        let resp = handle(msg, None).await.unwrap();
         assert_eq!(resp["result"]["isError"], true);
         assert!(
             resp["result"]["content"][0]["text"]
@@ -560,7 +670,7 @@ mod tests {
 
     #[tokio::test]
     async fn bad_json_is_parse_error() {
-        let resp = handle("not json").await.unwrap();
+        let resp = handle("not json", None).await.unwrap();
         assert_eq!(resp["error"]["code"], -32700);
         assert_eq!(resp["id"], Value::Null);
     }
@@ -568,6 +678,6 @@ mod tests {
     #[tokio::test]
     async fn notification_returns_no_response() {
         let msg = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-        assert!(handle(msg).await.is_none());
+        assert!(handle(msg, None).await.is_none());
     }
 }
