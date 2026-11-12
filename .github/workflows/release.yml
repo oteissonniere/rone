@@ -79,3 +79,43 @@ jobs:
             --title "Rone v${version}" \
             --notes-file CHANGELOG.md \
             dist/*/*.tar.gz*
+
+      # Bumps the homebrew-rone tap formula (version + macOS sha256) so that
+      # `brew install oteissonniere/rone/rone` always tracks the latest release.
+      # Requires a TAP_GITHUB_TOKEN repo secret: a fine-grained PAT with Contents
+      # read/write access to oteissonniere/homebrew-rone. Skipped (with a warning)
+      # when the secret is not set.
+      - name: Update homebrew tap formula
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning::TAP_GITHUB_TOKEN secret is not set - skipping the homebrew tap bump."
+            exit 0
+          fi
+          arm_sha="$(awk '{print $1}' "dist/rone-v${version}-aarch64-apple-darwin.tar.gz.sha256")"
+          x86_sha="$(awk '{print $1}' "dist/rone-v${version}-x86_64-apple-darwin.tar.gz.sha256")"
+          formula="$(sed -e "s/__VERSION__/${version}/" \
+            -e "s/__SHA256_ARM__/${arm_sha}/" \
+            -e "s/__SHA256_X86__/${x86_sha}/" homebrew/rone.rb.tpl)"
+          existing_sha="$(curl -sfH "Authorization: Bearer $TAP_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/oteissonniere/homebrew-rone/contents/Formula%2Frone.rb \
+            | python3 -c 'import sys, json; print(json.load(sys.stdin)["sha"])')"
+          content_b64="$(printf '%s' "$formula" | base64 | tr -d '\n')"
+          VERSION="$version" CONTENT_B64="$content_b64" EXISTING_SHA="$existing_sha" python3 - > payload.json <<'PY'
+          import json, os
+          print(json.dumps({
+              "message": f"Bump rone formula to v{os.environ['VERSION']}",
+              "content": os.environ["CONTENT_B64"],
+              "sha": os.environ["EXISTING_SHA"],
+          }))
+          PY
+          curl -sf -X PUT \
+            -H "Authorization: Bearer $TAP_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d @payload.json \
+            https://api.github.com/repos/oteissonniere/homebrew-rone/contents/Formula%2Frone.rb
+          echo "homebrew tap formula updated to v${version}"
